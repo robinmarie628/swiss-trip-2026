@@ -79,27 +79,38 @@ swiss-trip/
 
 ## 部署到 GitHub Pages
 
-在 `swiss-trip` 目录里执行（把 `<你的用户名>` 和 `<仓库名>` 换成你自己的）：
+仓库已经提交完毕，只差推上去。
+
+**1. 先在 GitHub 上建一个空仓库**
+
+打开 <https://github.com/new>：
+
+- **Repository name**：`swiss-trip-2026`
+- 选 **Public**（免费版 Pages 只支持公开仓库）
+- **不要**勾选 Add a README / .gitignore / license（保持空仓库）
+
+**2. 推送**
 
 ```bash
-git init
-git add .
-git commit -m "Swiss trip workbench"
-
-git branch -M main
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
+git remote add origin https://github.com/robinmarie628/swiss-trip-2026.git
 git push -u origin main
 ```
 
-然后到 GitHub 仓库页面：
+第一次推送会弹出浏览器让你登录 GitHub 授权，登录一次之后就不再问了。
 
-1. **Settings → Pages**
-2. **Source** 选 `Deploy from a branch`
-3. **Branch** 选 `main`，目录选 `/ (root)`，保存
-4. 等 1–2 分钟，访问：
+**3. 开启 Pages**
+
+仓库页面 → **Settings** → 左侧 **Pages**：
+
+- **Source**：`Deploy from a branch`
+- **Branch**：`main`，目录选 `/ (root)` → **Save**
+
+等 1–2 分钟（Actions 里能看到一次 `pages build and deployment` 跑完）。
+
+### 手机访问网址
 
 ```
-https://<你的用户名>.github.io/<仓库名>/
+https://robinmarie628.github.io/swiss-trip-2026/
 ```
 
 ### 手机上打开
@@ -110,19 +121,22 @@ https://<你的用户名>.github.io/<仓库名>/
 装好后图标会出现在桌面，打开是全屏无地址栏，行程、地图、酒店、票据离线可用
 （地图底图第一次看过的区域会被缓存，完全没网时新区域会显示空白，但地点列表和导航按钮仍可用）。
 
-> 如果仓库名是 `<你的用户名>.github.io`，访问地址就是 `https://<你的用户名>.github.io/`。
-
 ---
 
-## 隐私：关于票据二维码
+## 隐私：这个仓库是公开的
 
-半价卡二维码里有你的姓名和出生日期。**本仓库不要放任何证件或票据照片。**
+两件事已经处理好了，别不小心改回去：
 
-所以工作台的做法是：票据页里只放文字信息（卡号、有效期、航班信息），
-**二维码和票据照片由你在手机上现场拍照上传**，保存在手机浏览器的本地存储（IndexedDB）里，
-永远不会被提交到 Git，也不会上传到任何服务器。
+**1. 姓名和出生日期已从代码里移除。** `data.js` 里的旅客姓名写成「旅客本人」，半价卡的持卡人和出生日期也删掉了。
+仓库是公开的，这些信息一旦推上去就会被搜索引擎收录。如果你希望在自己手机上看到真实姓名，
+改 `data.js` 里的 `TRIP.traveller` 和 `TICKETS` 即可 —— 但**改完不要 commit**，否则又公开了。
 
+**2. 票据二维码和票据照片不进仓库。** 票据页里只有文字信息，**二维码和照片由你在手机上现场拍照上传**，
+存在手机浏览器的本地存储（IndexedDB）里，永远不会提交到 Git，也不会上传到任何服务器。
 换手机、清除浏览器数据、或换浏览器后这些照片会丢失 —— 到时重新拍一次即可。
+
+> 还有一点值得留意：这个仓库公开了你的行程日期和酒店，等于对外说明某段时间家里没人。
+> 如果介意，可以把仓库改成 Private —— 但那样免费版就不能用 Pages 了，手机网址会失效。
 
 ---
 

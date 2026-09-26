@@ -1,13 +1,18 @@
 /* ============================================================================
    Swiss Trip Workbench — trip data
-   Source: Switzerland_Travel_Itinerary_GUO_YIQIN_2026.docx
+   Source: personal travel itinerary (Switzerland, October 2026)
            + SBB Mobile "Trips" screenshot (booked connections)
            + Swiss Half Fare Card (order confirmation)
    Everything the app renders comes from this file. Edit here to change content.
+
+   NOTE — this repo is public. The traveller's real name and date of birth are
+   deliberately NOT stored here. If you want them shown on your own device,
+   edit `traveller` below and the half-fare-card rows in TICKETS — but keep
+   those edits local (don't commit them), or the details become public.
    ========================================================================== */
 
 const TRIP = {
-  traveller: 'GUO YIQIN',
+  traveller: '旅客本人',
   title: '瑞士 8 日行程',
   subtitle: 'Switzerland · 4–11 October 2026',
   purpose: 'Tourism / Visa application',
@@ -129,18 +134,18 @@ const HOTELS = [
 ];
 
 /* ---- tickets & passes -------------------------------------------------- */
+/* holder / 持卡人 / 出生日期 intentionally omitted — see the note at the top. */
 const TICKETS = [
   {
     id: 't1',
     kind: 'rail',
     title: '瑞士半价卡 Swiss Half Fare Card',
-    holder: 'Yiqin Guo · 28.06.1992',
+    holder: 'Swiss Half Fare Card',
     price: 'CHF 150.00',
     validFrom: '2026-10-04',
     validTo: '2026-11-03',
     facts: [
-      ['持卡人', 'Yiqin Guo（郭艺沁）'],
-      ['出生日期', '1992-06-28'],
+      ['卡类型', 'Swiss Half Fare Card（半价卡）'],
       ['价格', 'CHF 150.00'],
       ['有效期', '2026-10-04 → 2026-11-03'],
       ['权益', '1 个月内，1 等 / 2 等车票享 50% 折扣'],
@@ -151,7 +156,7 @@ const TICKETS = [
     id: 't2',
     kind: 'flight',
     title: '去程机票 CA861',
-    holder: 'GUO YIQIN',
+    holder: '旅客本人',
     facts: [
       ['航班', 'Air China CA861'],
       ['日期', '2026-10-04'],
@@ -164,7 +169,7 @@ const TICKETS = [
     id: 't3',
     kind: 'flight',
     title: '回程机票 CA862',
-    holder: 'GUO YIQIN',
+    holder: '旅客本人',
     facts: [
       ['航班', 'Air China CA862'],
       ['日期', '2026-10-11'],
