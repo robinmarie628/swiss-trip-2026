@@ -12,7 +12,7 @@
    ========================================================================== */
 
 const TRIP = {
-  traveller: '旅客本人',
+  traveller: '本人',
   title: '瑞士 8 日行程',
   subtitle: 'Switzerland · 4–11 October 2026',
   purpose: 'Tourism / Visa application',
@@ -156,7 +156,7 @@ const TICKETS = [
     id: 't2',
     kind: 'flight',
     title: '去程机票 CA861',
-    holder: '旅客本人',
+    holder: '本人',
     facts: [
       ['航班', 'Air China CA861'],
       ['日期', '2026-10-04'],
@@ -169,7 +169,7 @@ const TICKETS = [
     id: 't3',
     kind: 'flight',
     title: '回程机票 CA862',
-    holder: '旅客本人',
+    holder: '本人',
     facts: [
       ['航班', 'Air China CA862'],
       ['日期', '2026-10-11'],
