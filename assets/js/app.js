@@ -1798,12 +1798,13 @@
     const all = [];
     phraseGroups().forEach(function (g) {
       g.items.forEach(function (it) {
-        all.push({ group: g, zh: it[0], en: it[1], de: it[2] });
+        // it[3] is an optional synonym list, so colloquial wording still hits
+        all.push({ group: g, zh: it[0], en: it[1], de: it[2], alt: it[3] || '' });
       });
     });
     if (!query) return null;
     return all.filter(function (p) {
-      return (p.zh + ' ' + p.en + ' ' + p.de).toLowerCase().indexOf(query) >= 0;
+      return (p.zh + ' ' + p.en + ' ' + p.de + ' ' + p.alt).toLowerCase().indexOf(query) >= 0;
     });
   }
 
@@ -2391,6 +2392,9 @@
 
   function selectDay(i, goToday) {
     state.sel = clamp(i, 0, DAYS.length - 1);
+    // leaving a day ends any reorder session, otherwise state.sorting keeps the
+    // old dayId and the long-press guard would block reordering from now on
+    state.sorting = null;
     store.set(K.sel, state.sel);
     state.mapFilter = String(state.sel);
     if (goToday !== false && state.view !== 'today') setView('today');
@@ -2457,6 +2461,15 @@
     // delegated clicks
     document.addEventListener('click', function (e) {
       const t = e.target;
+
+      // While a list is being reordered, a tap inside it must not fire the row's
+      // normal action. The click that the browser fires when the finger lifts can
+      // land on a re-rendered row, which would otherwise pop a sheet over the
+      // sort UI. Only the sort controls stay live.
+      if (state.sorting && t.closest('#tlList, #placeList') &&
+          !t.closest('[data-move-kind], [data-sort-done], [data-sort-auto]')) {
+        return;
+      }
 
       const dayBtn = t.closest('[data-day]');
       if (dayBtn && !t.closest('#dayChips')) { selectDay(Number(dayBtn.dataset.day)); return; }
