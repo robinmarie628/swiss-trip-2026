@@ -4,7 +4,7 @@
    Map tiles are cached opportunistically after first view.
    ========================================================================== */
 
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.2.0';
 const SHELL = 'swiss-shell-' + VERSION;
 const TILES = 'swiss-tiles-' + VERSION;
 
@@ -70,13 +70,32 @@ function isTile(url) {
   return TILE_HOSTS.indexOf(url.hostname) >= 0;
 }
 
-async function cacheFirst(request, cacheName) {
+/**
+ * Network-first with a cache fallback.
+ *
+ * The site is tiny (~60 KB of app code), so going to the network first is cheap
+ * and it means a freshly pushed change shows up on the very next load — no
+ * manual cache-version bump required. If the network is missing or slow we fall
+ * straight back to the cached copy, so offline still works exactly as before.
+ */
+async function networkFirst(request, cacheName, timeoutMs) {
   const cache = await caches.open(cacheName);
-  const hit = await cache.match(request, { ignoreSearch: false });
-  if (hit) return hit;
-  const res = await fetch(request);
-  if (res && res.ok) cache.put(request, res.clone()).catch(() => {});
-  return res;
+  const cached = await cache.match(request);
+
+  let timer = null;
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  if (ctl) timer = setTimeout(() => ctl.abort(), timeoutMs || 4000);
+
+  try {
+    const res = await fetch(request, ctl ? { signal: ctl.signal } : undefined);
+    if (timer) clearTimeout(timer);
+    if (res && res.ok) cache.put(request, res.clone()).catch(() => {});
+    return res;
+  } catch (e) {
+    if (timer) clearTimeout(timer);
+    if (cached) return cached;
+    throw e;
+  }
 }
 
 async function staleWhileRevalidate(request, cacheName) {
@@ -97,21 +116,21 @@ self.addEventListener('fetch', (event) => {
   let url;
   try { url = new URL(req.url); } catch (e) { return; }
 
-  // map tiles: cache then revalidate in background
+  // map tiles: cache then revalidate in background (tiles are large and rarely change)
   if (isTile(url)) {
     event.respondWith(staleWhileRevalidate(req, TILES));
     return;
   }
 
-  // same-origin shell assets: cache first
+  // app shell: fresh when online, cached when not
   if (url.origin === self.location.origin) {
     event.respondWith((async () => {
       try {
-        return await cacheFirst(req, SHELL);
+        return await networkFirst(req, SHELL, 4000);
       } catch (e) {
         if (req.mode === 'navigate') {
           const cache = await caches.open(SHELL);
-          const shell = await cache.match('./index.html');
+          const shell = (await cache.match('./index.html')) || (await cache.match('./'));
           if (shell) return shell;
         }
         return new Response('离线中，且该资源未缓存。', {
