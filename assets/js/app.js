@@ -181,6 +181,7 @@
           '<span class="arrow">·</span><span class="en">' + esc(day.titleEn) + '</span>' +
         '</div>' +
         '<div class="hero-sum">' + esc(day.summary) + '</div>' +
+        (typeof WEATHER !== 'undefined' ? WEATHER.panelHtml(day) : '') +
         '<div class="hero-stats">' +
           '<div class="hero-stat"><div class="k">行程日</div><div class="v">Day ' + idx + '</div></div>' +
           '<div class="hero-stat"><div class="k">住宿</div><div class="v">' +
@@ -403,6 +404,7 @@
     // quick jump to wallet
     html += '<div class="sec"><div class="card"><div class="card-bd">' +
       '<div class="btn-row">' +
+        '<button class="btn sm ghost" data-wx-open="1">' + icon('sun') + '天气详情</button>' +
         '<button class="btn sm ghost" data-go="wallet">' + icon('coins') + '今日记账</button>' +
         '<button class="btn sm ghost" data-go="map">' + icon('map') + '打开地图</button>' +
         '<button class="btn sm ghost" data-open="tickets">' + icon('qr') + '出示票据</button>' +
@@ -1041,14 +1043,16 @@
 
   /* ======================== sheets ==================================== */
   let sheetOpen = false;
+  let sheetKind = null;
 
-  function openSheet(title, sub, body, after) {
+  function openSheet(title, sub, body, after, kind) {
     $('#sheetTitle').textContent = title;
     $('#sheetSub').textContent = sub || '';
     $('#sheetBody').innerHTML = body;
     $('#sheet').classList.add('is-open');
     $('#sheetBg').classList.add('is-open');
     sheetOpen = true;
+    sheetKind = kind || null;
     if (after) setTimeout(after, 40);
   }
 
@@ -1056,6 +1060,24 @@
     $('#sheet').classList.remove('is-open');
     $('#sheetBg').classList.remove('is-open');
     sheetOpen = false;
+    sheetKind = null;
+  }
+
+  /* ---- weather ------------------------------------------------------- */
+  function openWeatherSheet() {
+    if (typeof WEATHER === 'undefined') return;
+    const day = DAYS[state.sel];
+    const place = WEATHER.placeFor(day);
+    openSheet('天气 · ' + (place ? place.label : ''),
+      '气温 · 天气 · 穿衣建议 · 注意事项',
+      WEATHER.sheetHtml(day), null, 'weather');
+  }
+
+  function repaintWeatherSheet() {
+    if (sheetOpen && sheetKind === 'weather' && typeof WEATHER !== 'undefined') {
+      const day = DAYS[state.sel];
+      $('#sheetBody').innerHTML = WEATHER.sheetHtml(day);
+    }
   }
 
   function navSheet(lat, lng, name, sub) {
@@ -1427,6 +1449,20 @@
         return;
       }
 
+      const wxo = t.closest('[data-wx-open]');
+      if (wxo) { openWeatherSheet(); return; }
+
+      const wxr = t.closest('[data-wx-refresh]');
+      if (wxr) {
+        wxr.textContent = '刷新中…';
+        WEATHER.refresh(true).then(function () {
+          toast('天气已更新');
+          repaintWeatherSheet();
+          renderHero();
+        });
+        return;
+      }
+
       const preset = t.closest('[data-preset]');
       if (preset) {
         const p = preset.dataset.preset.split('|');
@@ -1588,6 +1624,16 @@
     else $('#hdrSub').textContent = '行程已结束 · 8 天 7 晚';
 
     setView(state.view, { keepScroll: true });
+
+    // weather: paint from cache immediately, then refresh in the background
+    if (typeof WEATHER !== 'undefined') {
+      WEATHER.loadCache();
+      WEATHER.onUpdate(function () {
+        if (state.view === 'today') renderHero();
+        repaintWeatherSheet();
+      });
+      WEATHER.refresh();
+    }
 
     // offline indicator
     const off = () => $('#offlineBar').classList.toggle('is-on', !navigator.onLine);
