@@ -1083,6 +1083,143 @@ main {
 .wxs-err { margin-top: 6px; color: #c0392b; }
 .wxs-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
+/* ============================================================================
+   Editors — day content, place search, transport picker, preset amounts
+   ========================================================================== */
+
+.sheet-inner { display: block; }
+.sheet-sep { height: 1px; background: var(--line); margin: 18px 0; }
+
+/* ---------- wallet: FX caption ----------------------------------------- */
+.wh-rate {
+  margin-top: 10px; padding-top: 9px;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+  font-size: 10.5px; letter-spacing: .01em; color: rgba(255, 255, 255, .55);
+}
+
+/* ---------- editable expense presets ----------------------------------- */
+.preset-row {
+  display: grid;
+  grid-template-columns: 62px 1fr 74px 28px;
+  gap: 7px; align-items: center;
+  padding: 7px 8px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.preset-row + .preset-row { margin-top: 7px; }
+.preset-row select,
+.preset-row input {
+  height: 34px; padding: 0 9px; min-width: 0; width: 100%;
+  border-radius: 9px; border: 1.5px solid var(--line);
+  background: var(--surface); color: var(--ink);
+  font-size: 13px; outline: none;
+  -webkit-appearance: none; appearance: none;
+}
+.preset-row select {
+  border-color: color-mix(in srgb, var(--c, var(--line)) 45%, var(--line));
+  color: var(--c, var(--ink));
+  font-weight: 650; font-size: 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23767e8c' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 7px center; background-size: 13px;
+  padding-right: 24px;
+}
+.preset-row input[type="number"] {
+  text-align: right; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.preset-row input:focus, .preset-row select:focus { border-color: var(--red); }
+
+/* ---------- day editor ------------------------------------------------- */
+.egroup { margin-bottom: 20px; }
+.egroup-h { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.egroup-h b { font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; }
+.egroup-h .ibub { width: 26px; height: 26px; border-radius: 8px; }
+.egroup-h .ibub svg { width: 14px; height: 14px; }
+.egroup-n {
+  margin-left: auto; font-size: 11px; font-weight: 700;
+  padding: 2px 8px; border-radius: var(--r-pill);
+  background: var(--surface-3); color: var(--muted);
+}
+.egroup-empty {
+  padding: 14px 12px; text-align: center;
+  font-size: 12.5px; color: var(--muted);
+  background: var(--surface-2); border-radius: var(--r-sm);
+  border: 1px dashed var(--line-strong);
+}
+.egroup-add { width: 100%; margin-top: 9px; }
+
+.erow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 11px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.erow + .erow { margin-top: 7px; }
+.erow-tx { flex: 1; min-width: 0; }
+.erow-tx b {
+  display: block; font-size: 13px; font-weight: 650; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.erow-tx span {
+  display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; line-height: 1.45;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.erow .ledger-del { background: var(--surface-3); }
+
+/* ---------- quick chips ------------------------------------------------ */
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 5px 11px; border-radius: var(--r-pill);
+  background: var(--surface-2); border: 1px solid var(--line);
+  font-size: 12px; font-weight: 600; color: var(--ink-2);
+  transition: all .14s var(--ease);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip:active { background: var(--red-soft); border-color: var(--red); color: var(--red-ink); }
+
+.tp-when { display: flex; gap: 10px; }
+
+/* ---------- connection cards ------------------------------------------- */
+.conn-h {
+  font-size: 10.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--faint); margin-bottom: 10px;
+}
+.conn {
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.conn + .conn { margin-top: 10px; }
+.conn-top { display: flex; align-items: baseline; gap: 9px; padding: 11px 13px 0; }
+.conn-time {
+  font-size: 17px; font-weight: 800; letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+}
+.conn-time i { font-style: normal; color: var(--faint); font-weight: 400; margin: 0 2px; }
+.conn-meta {
+  margin-left: auto; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.conn-lines { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 13px 0; }
+.conn-lines span {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .01em;
+  padding: 3px 8px; border-radius: 6px;
+  background: var(--surface-3); color: var(--ink-2);
+}
+.conn-path { padding: 7px 13px 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.conn-detail {
+  margin: 10px 13px 0; padding: 9px 11px;
+  background: var(--surface-2); border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+}
+.conn-sec {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 5px 0; font-size: 11.5px; color: var(--ink-2);
+}
+.conn-sec + .conn-sec { border-top: 1px dashed var(--line); }
+.conn-sec b { font-weight: 700; min-width: 52px; }
+.conn-sec.walk { color: var(--muted); }
+.conn-sec.walk svg { width: 13px; height: 13px; flex: none; }
+.conn-plat { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.conn-acts { display: flex; gap: 8px; justify-content: flex-end; padding: 11px 13px 12px; }
+
 /* ---------- misc lists -------------------------------------------------- */
 .kv { display: flex; gap: 12px; padding: 9px 0; font-size: 13px; }
 .kv + .kv { border-top: 1px solid var(--line); }

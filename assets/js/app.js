@@ -90,6 +90,9 @@
     mapFilter: 'all',
     mapReady: false,
     mapLayer: 'std',
+    mapDirty: false,
+    presetEdit: false,
+    editorDay: 0,
   };
 
   function dayIndexByDate(iso) {
@@ -316,14 +319,17 @@
   /* ---- card wrappers ------------------------------------------------ */
   function timelineCard(day) {
     return '<div class="card">' +
-      cardHead(regionOf(day), 'clock', '今日行程', day.headline) +
+      cardHead(regionOf(day), 'clock', '今日行程', day.headline,
+        '<div class="rt"><button class="btn sm ghost" data-edit-day="1">' +
+          icon('plus') + '编辑</button></div>') +
       '<div class="card-bd tight">' + timelineBare(day) + '</div></div>';
   }
 
   function transportCard(day, title, withAll) {
-    const right = withAll
-      ? '<div class="rt"><button class="btn sm ghost" data-all-bookings="1">全部车次</button></div>'
-      : '';
+    const right = '<div class="rt">' +
+      (withAll ? '<button class="btn sm ghost" data-all-bookings="1">全部车次</button>' : '') +
+      '<button class="btn sm ghost" data-add-leg-day="1">' + icon('plus') + '</button>' +
+      '</div>';
     return '<div class="card">' +
       cardHead(regionOf(day), 'train', title || '交通', '时间均为约数 · 以 SBB App 为准', right) +
       '<div class="card-bd tight">' + legsBare(day) + '</div></div>';
@@ -377,10 +383,13 @@
   }
 
   function placesCard(day, title) {
-    if (!day.places.length) return '';
     return '<div class="card">' +
-      cardHead(regionOf(day), 'pin', title || '今日地点', '共 ' + day.places.length + ' 处') +
-      '<div class="card-bd tight">' + placesBare(day) + '</div></div>';
+      cardHead(regionOf(day), 'pin', title || '今日地点', '共 ' + day.places.length + ' 处',
+        '<div class="rt"><button class="btn sm ghost" data-add-place-day="1">' +
+          icon('plus') + '添加</button></div>') +
+      '<div class="card-bd tight">' +
+        (day.places.length ? placesBare(day) : '<div class="egroup-empty">还没有地点，点「添加」搜索</div>') +
+      '</div></div>';
   }
 
   function tipsCard(day) {
@@ -404,6 +413,8 @@
     // quick jump to wallet
     html += '<div class="sec"><div class="card"><div class="card-bd">' +
       '<div class="btn-row">' +
+        '<button class="btn sm ghost" data-edit-day="1">' + icon('plus') + '编辑行程</button>' +
+        '<button class="btn sm ghost" data-add-place-day="1">' + icon('pin') + '添加地点</button>' +
         '<button class="btn sm ghost" data-wx-open="1">' + icon('sun') + '天气详情</button>' +
         '<button class="btn sm ghost" data-go="wallet">' + icon('coins') + '今日记账</button>' +
         '<button class="btn sm ghost" data-go="map">' + icon('map') + '打开地图</button>' +
@@ -707,8 +718,40 @@
   /* ======================== WALLET ==================================== */
   function expenses() { return store.get(K.expenses, []); }
   function saveExpenses(list) { store.set(K.expenses, list); }
-  function budget() { return Number(store.get(K.budget, TRIP.budgetTarget)) || 0; }
-  function rates() { return store.get(K.rates, { cny: 8.85, eur: 1.06 }); }
+  function budget() { return STORE.budget(); }
+  function rates() {
+    const r = STORE.rates();
+    if (r && r.cny && r.eur) return r;
+    return { cny: 8.85, eur: 1.06, source: '默认值', date: '', stale: true };
+  }
+
+  /* live CHF rates — cached for 12 h, refreshed in the background */
+  const FX_TTL = 12 * 60 * 60 * 1000;
+  let fxBusy = false;
+
+  function fxRefresh(force) {
+    if (fxBusy || typeof SERVICES === 'undefined') return Promise.resolve(rates());
+    const cur = STORE.rates();
+    if (!force && cur && cur.at && Date.now() - cur.at < FX_TTL) return Promise.resolve(cur);
+    fxBusy = true;
+    return SERVICES.fx().then(function (r) {
+      fxBusy = false;
+      STORE.setRates(r);
+      if (state.view === 'wallet') renderWallet();
+      const el = document.getElementById('moreRates');
+      if (el) el.textContent = '1 CHF ≈ ¥' + r.cny.toFixed(2) + ' / €' + r.eur.toFixed(3);
+      return r;
+    }).catch(function () { fxBusy = false; return rates(); });
+  }
+
+  function fxCaption() {
+    const r = rates();
+    if (r.stale) return '默认汇率 · 点「更新汇率」获取实时';
+    const when = r.date ? r.date.slice(5).replace('-', '/') : '';
+    const hrs = r.at ? (Date.now() - r.at) / 3600000 : null;
+    const age = hrs == null ? '' : hrs < 1 ? ' · 刚刚更新' : ' · ' + Math.round(hrs) + ' 小时前';
+    return r.source + (when ? ' · ' + when : '') + age;
+  }
 
   function fmtCHF(n) {
     return (Math.round(n * 100) / 100).toLocaleString('en-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -761,21 +804,14 @@
           '<span>≈ <b>¥' + fmtCHF(total * rt.cny) + '</b> · €' + fmtCHF(total * rt.eur) + '</span>' +
           '<span>' + list.length + ' 笔记录</span>' +
         '</div>' +
+        '<div class="wh-rate">' + esc(fxCaption()) + '</div>' +
       '</div>' +
 
       '<div class="sec">' +
-        '<div class="sec-head"><h2>常见消费 · 点一下添加</h2></div>' +
-        '<div class="presets">' +
-          EXPENSE_PRESETS.map(function (p) {
-            const c = catById(p.cat);
-            return '<button class="preset" data-preset="' + esc(p.label) + '|' + p.amount + '|' + p.cat + '">' +
-              '<span class="k" style="background:' + c.color + '1f;color:' + c.color + '">' + esc(c.label) + '</span>' +
-              '<span class="n">' + esc(p.label) + '</span>' +
-              '<span class="a">' + fmtCHF(p.amount) + '</span>' +
-              '<span class="plus">' + icon('plus') + '</span>' +
-            '</button>';
-          }).join('') +
-        '</div>' +
+        '<div class="sec-head"><h2>常见消费' + (state.presetEdit ? '' : ' · 点一下添加') + '</h2>' +
+          '<span class="more" data-preset-edit="' + (state.presetEdit ? '0' : '1') + '">' +
+            (state.presetEdit ? '完成' : '改金额') + '</span></div>' +
+        (state.presetEdit ? presetsEditHtml() : presetsTapHtml()) +
       '</div>' +
 
       (activeCats.length ?
@@ -814,10 +850,54 @@
       '<div class="sec">' +
         '<div class="btn-row">' +
           '<button class="btn sm ghost" data-edit-budget="1">修改预算</button>' +
-          '<button class="btn sm ghost" data-edit-rates="1">修改汇率</button>' +
+          '<button class="btn sm ghost" data-fx-refresh="1">更新汇率</button>' +
+          '<button class="btn sm ghost" data-edit-rates="1">手动设汇率</button>' +
           '<button class="btn sm ghost" data-export-csv="1">导出 CSV</button>' +
         '</div>' +
       '</div>';
+  }
+
+  /* ---------- expense presets (tap-to-add / edit) ---------------------- */
+  function presetsTapHtml() {
+    const list = STORE.presets();
+    if (!list.length) {
+      return '<div class="empty">' + icon('coins') + '还没有常用项<br>点「改金额」自己加几个</div>';
+    }
+    return '<div class="presets">' + list.map(function (p) {
+      const c = catById(p.cat);
+      return '<button class="preset" data-preset="' + esc(p.id) + '">' +
+        '<span class="k" style="background:' + c.color + '1f;color:' + c.color + '">' + esc(c.label) + '</span>' +
+        '<span class="n">' + esc(p.label) + '</span>' +
+        '<span class="a">' + fmtCHF(p.amount) + '</span>' +
+        '<span class="plus">' + icon('plus') + '</span>' +
+      '</button>';
+    }).join('') + '</div>';
+  }
+
+  function presetsEditHtml() {
+    return '<div class="presets">' + STORE.presets().map(function (p) {
+      const c = catById(p.cat);
+      return '<div class="preset-row" style="--c:' + c.color + '">' +
+        '<select data-pcat="' + esc(p.id) + '" aria-label="分类">' +
+          EXPENSE_CATEGORIES.map(function (x) {
+            return '<option value="' + x.id + '"' + (x.id === p.cat ? ' selected' : '') + '>' +
+              esc(x.label) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<input data-plabel="' + esc(p.id) + '" type="text" value="' + esc(p.label) + '" ' +
+          'placeholder="名称" aria-label="名称">' +
+        '<input data-pamt="' + esc(p.id) + '" type="number" inputmode="decimal" step="0.05" min="0" ' +
+          'value="' + p.amount + '" aria-label="金额">' +
+        '<button class="ledger-del" data-pdel="' + esc(p.id) + '" aria-label="删除">' + icon('x') + '</button>' +
+      '</div>';
+    }).join('') + '</div>' +
+    '<div class="btn-row" style="margin-top:11px">' +
+      '<button class="btn sm primary" data-padd="1">' + icon('plus') + '添加常用项</button>' +
+      '<button class="btn sm ghost" data-preset-reset="1">恢复默认</button>' +
+    '</div>' +
+    '<div style="margin-top:9px;font-size:11.5px;line-height:1.6;color:var(--muted)">' +
+      '改完直接生效，存在手机本地。点「完成」回到一键添加模式。' +
+    '</div>';
   }
 
   /* ---------- tickets ---------- */
@@ -873,6 +953,7 @@
   function renderMore() {
     const st = tripStatus();
     const rt = rates();
+    const stats = STORE.stats();
 
     $('#moreBody').innerHTML =
       /* hotels */
@@ -951,17 +1032,46 @@
 
       /* tools */
       '<div class="sec">' +
-        '<div class="sec-head"><h2>工具</h2></div>' +
+        '<div class="sec-head"><h2>工具与设置</h2></div>' +
         '<div class="card"><div class="card-bd tight">' +
           '<div class="kv"><span class="k">行程预算</span><span class="v">CHF ' + fmtCHF(budget()) + '</span>' +
             '<button class="btn sm ghost" data-edit-budget="1">改</button></div>' +
-          '<div class="kv"><span class="k">参考汇率</span><span class="v">1 CHF ≈ ¥' + rt.cny + ' / €' + rt.eur + '</span>' +
-            '<button class="btn sm ghost" data-edit-rates="1">改</button></div>' +
+          '<div class="kv"><span class="k">实时汇率</span>' +
+            '<span class="v" id="moreRates">1 CHF ≈ ¥' + rt.cny.toFixed(2) + ' / €' + rt.eur.toFixed(3) + '</span>' +
+            '<button class="btn sm ghost" data-fx-refresh="1">更新</button></div>' +
+          '<div class="kv"><span class="k"></span><span class="v" style="font-weight:500;font-size:11.5px;color:var(--muted)">' +
+            esc(fxCaption()) + '</span>' +
+            '<button class="btn sm ghost" data-edit-rates="1">手动</button></div>' +
           '<div class="kv"><span class="k">瑞士当前时间</span><span class="v" id="moreClock">--:--</span></div>' +
           '<div class="kv"><span class="k">行程状态</span><span class="v">' +
             (st.phase === 'before' ? '未出发 · 还有 ' + st.days + ' 天'
               : st.phase === 'during' ? '进行中 · 第 ' + (st.index + 1) + ' 天'
               : '已结束') + '</span></div>' +
+        '</div></div>' +
+      '</div>' +
+
+      /* my edits */
+      '<div class="sec">' +
+        '<div class="sec-head"><h2>我的修改</h2><span class="more">只在本机</span></div>' +
+        '<div class="card"><div class="card-bd tight">' +
+          '<div class="kv"><span class="k">新增地点</span><span class="v">' + stats.places + ' 个</span></div>' +
+          '<div class="kv"><span class="k">新增交通</span><span class="v">' + stats.legs + ' 段</span></div>' +
+          '<div class="kv"><span class="k">新增安排</span><span class="v">' + stats.blocks + ' 条</span></div>' +
+          '<div class="kv"><span class="k">隐藏项目</span><span class="v">' + stats.hidden + ' 项</span></div>' +
+          '<div class="kv"><span class="k">常用消费</span><span class="v">' +
+            (stats.hasCustomPresets ? '已自定义 ' + STORE.presets().length + ' 项' : '默认 ' + STORE.presets().length + ' 项') +
+            '</span></div>' +
+        '</div>' +
+        '<div class="card-bd">' +
+          '<div class="btn-row">' +
+            '<button class="btn sm ghost" data-backup="1">导出备份</button>' +
+            '<button class="btn sm ghost" data-restore="1">导入备份</button>' +
+            '<button class="btn sm ghost" data-clear-edits="1">清空我的修改</button>' +
+          '</div>' +
+          '<div style="margin-top:10px;font-size:11.5px;line-height:1.65;color:var(--muted)">' +
+            '所有修改存在这台手机的浏览器里，不会上传。换手机时用「导出备份」生成一个文件，' +
+            '在新手机上「导入备份」即可恢复。' +
+          '</div>' +
         '</div></div>' +
       '</div>' +
 
@@ -1041,6 +1151,463 @@
     hookInstall();
   }
 
+  /* ======================== day editors =============================== */
+
+  /** re-render whatever is on screen after a mutation */
+  function refreshAfterEdit() {
+    if (state.mapReady && state.view === 'map') { renderMapLegend(); renderMapContent(); }
+    if (state.view === 'today') renderToday();
+    else if (state.view === 'itin') renderItin();
+    else if (state.view === 'wallet') renderWallet();
+    else if (state.view === 'more') renderMore();
+    else renderChips();
+  }
+
+  function editorRow(kind, index, title, sub) {
+    return '<div class="erow">' +
+      '<span class="erow-tx"><b>' + esc(title) + '</b>' +
+        (sub ? '<span>' + esc(sub) + '</span>' : '') + '</span>' +
+      '<button class="ledger-del" data-rm="' + kind + ':' + index + '" aria-label="删除">' +
+        icon('x') + '</button>' +
+    '</div>';
+  }
+
+  function editorGroup(title, iconId, rows, addLabel, addAttr) {
+    return '<div class="egroup">' +
+      '<div class="egroup-h"><span class="ibub">' + icon(iconId) + '</span>' +
+        '<b>' + esc(title) + '</b>' +
+        '<span class="egroup-n">' + rows.length + '</span></div>' +
+      (rows.length ? rows.join('') : '<div class="egroup-empty">暂无，点下面添加</div>') +
+      '<button class="btn sm ghost egroup-add" ' + addAttr + '>' + icon('plus') + esc(addLabel) + '</button>' +
+    '</div>';
+  }
+
+  function openDayEditor(dayIndex) {
+    state.editorDay = dayIndex;
+    const day = DAYS[dayIndex];
+    const stats = STORE.stats();
+
+    const blockRows = day.blocks.map(function (b, i) {
+      return editorRow('b', i, b.time + ' · ' + b.label, b.text);
+    });
+    const legRows = day.transport.map(function (t, i) {
+      const route = t.to ? (t.from + ' → ' + t.to) : t.from;
+      return editorRow('t', i, route, [t.mode, t.duration, t.booked ? '已订 ' + t.booked : ''].filter(Boolean).join(' · '));
+    });
+    const placeRows = day.places.map(function (p, i) {
+      return editorRow('p', i, p.name, [p.nameEn, p.note].filter(Boolean).join(' · '));
+    });
+
+    openSheet('编辑行程', day.dow + ' · ' + day.title,
+      editorGroup('时间安排', 'clock', blockRows, '添加安排', 'data-add-block="1"') +
+      editorGroup('交通', 'train', legRows, '添加交通（自动推荐班次）', 'data-add-leg="1"') +
+      editorGroup('地点', 'pin', placeRows, '添加地点（搜索）', 'data-add-place="1"') +
+      '<div class="sheet-sep"></div>' +
+      '<div class="btn-row">' +
+        '<button class="btn sm ghost" data-restore-day="1">恢复本日默认</button>' +
+        '<button class="btn sm ghost" data-go="map">在地图查看</button>' +
+      '</div>' +
+      '<div style="margin-top:10px;font-size:11.5px;line-height:1.65;color:var(--muted)">' +
+        '改动只存在这台手机上，会立刻同步到「今日」和「地图」。' +
+        (stats.hidden || stats.places || stats.legs || stats.blocks
+          ? '<br>本机已修改：新增 ' + stats.places + ' 个地点、' + stats.legs + ' 段交通、' +
+            stats.blocks + ' 条安排，隐藏 ' + stats.hidden + ' 项。'
+          : '') +
+      '</div>',
+      function () {
+        const bd = $('.sheet-inner');
+        bd.addEventListener('click', function (ev) {
+          const rm = ev.target.closest('[data-rm]');
+          if (rm) {
+            const parts = rm.dataset.rm.split(':');
+            STORE.remove(day.id, parts[0], Number(parts[1]));
+            refreshAfterEdit();
+            openDayEditor(dayIndex);
+            toast('已移除');
+            return;
+          }
+          if (ev.target.closest('[data-add-block]')) { openBlockEditor(dayIndex); return; }
+          if (ev.target.closest('[data-add-leg]')) {
+            const ps = DAYS[dayIndex].places;
+            openTransportPicker(dayIndex, ps.length ? ps[0] : null,
+              ps.length > 1 ? ps[ps.length - 1] : null);
+            return;
+          }
+          if (ev.target.closest('[data-add-place]')) { openPlaceSearch(dayIndex); return; }
+          if (ev.target.closest('[data-restore-day]')) {
+            STORE.restoreHidden(day.id);
+            refreshAfterEdit();
+            openDayEditor(dayIndex);
+            toast('已恢复本日默认内容');
+            return;
+          }
+        });
+      }, 'editor');
+  }
+
+  /* ---------- add a timeline entry ------------------------------------ */
+  function openBlockEditor(dayIndex) {
+    const day = DAYS[dayIndex];
+    openSheet('添加安排', day.dow + ' · ' + day.title,
+      '<div class="field"><label>时间</label>' +
+        '<input id="blTime" type="text" placeholder="例如 14:00 或 下午" value=""></div>' +
+      '<div class="field"><label>标签</label>' +
+        '<input id="blLabel" type="text" placeholder="例如 午餐、购物" value=""></div>' +
+      '<div class="field"><label>内容</label>' +
+        '<textarea id="blText" placeholder="写点具体安排…"></textarea></div>' +
+      '<button class="btn block primary" id="blSave" style="height:46px">' + icon('check') + '保存</button>',
+      function () {
+        $('#blTime').focus();
+        $('#blSave').addEventListener('click', function () {
+          const text = $('#blText').value.trim();
+          if (!text) { toast('请填写内容'); return; }
+          STORE.addBlock(day.id, {
+            time: $('#blTime').value.trim() || '灵活',
+            label: $('#blLabel').value.trim() || '安排',
+            text: text,
+          });
+          refreshAfterEdit();
+          openDayEditor(dayIndex);
+          toast('已添加');
+        });
+      }, 'editor');
+  }
+
+  /* ---------- add a place (search) ------------------------------------ */
+  let psResults = [];
+
+  function renderPsResults(list, stillSearching) {
+    const box = $('#psResults');
+    if (!box) return;
+    if (!list.length) {
+      box.innerHTML = '<div class="egroup-empty">' +
+        (stillSearching ? '搜索中…' : '没找到，换个关键词，或用下面的手动输入') + '</div>';
+      return;
+    }
+    box.innerHTML =
+      (stillSearching ? '<div class="egroup-empty" style="margin-bottom:8px">已找到 ' + list.length + ' 个，继续搜索中…</div>' : '') +
+      list.map(function (p, i) {
+        const src = p.source === 'station' ? '瑞士铁路车站'
+          : p.source === 'osm' ? 'OpenStreetMap'
+          : '地名';
+        return '<button class="place" data-ps-add="' + i + '">' +
+          '<span class="place-ic">' + icon(p.source === 'station' ? 'train' : 'pin') + '</span>' +
+          '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' +
+            esc(src + (p.note ? ' · ' + p.note : '')) +
+            ' · ' + p.lat.toFixed(4) + ', ' + p.lng.toFixed(4) + '</span></span>' +
+          '<span class="place-go">' + icon('plus') + '</span>' +
+        '</button>';
+      }).join('');
+  }
+
+  function openPlaceSearch(dayIndex, onAdded) {
+    const day = DAYS[dayIndex];
+    psResults = [];
+    let timer = null;
+    let seq = 0;
+
+    openSheet('添加地点', day.dow + ' · ' + day.title,
+      '<div class="field">' +
+        '<label>搜索地点或车站</label>' +
+        '<input id="psQuery" type="search" placeholder="Interlaken / Bachalpsee / 车站名" ' +
+          'autocomplete="off" autocapitalize="off">' +
+      '</div>' +
+      '<div id="psResults"><div class="egroup-empty">输入至少 2 个字开始搜索</div></div>' +
+      '<div class="sheet-sep"></div>' +
+      '<button class="btn block ghost" id="psManual">手动输入名称与坐标</button>',
+      function () {
+        const q = $('#psQuery');
+        if (!q) return;
+        q.focus();
+        q.addEventListener('input', function () {
+          clearTimeout(timer);
+          const v = q.value.trim();
+          const mine = ++seq;
+          if (v.length < 2) {
+            psResults = [];
+            $('#psResults').innerHTML = '<div class="egroup-empty">输入至少 2 个字开始搜索</div>';
+            return;
+          }
+          $('#psResults').innerHTML = '<div class="egroup-empty">搜索中…</div>';
+          timer = setTimeout(function () {
+            // results stream in: stations usually land well before geocoding
+            SERVICES.searchPlacesStreaming(v, function (list, finished) {
+              if (mine !== seq) return;              // a newer keystroke superseded this
+              psResults = list;
+              renderPsResults(list, !finished);
+            });
+          }, 380);
+        });
+
+        $('#psResults').addEventListener('click', function (ev) {
+          const b = ev.target.closest('[data-ps-add]');
+          if (!b) return;
+          const p = psResults[Number(b.dataset.psAdd)];
+          if (!p) return;
+          STORE.addPlace(day.id, p);
+          refreshAfterEdit();
+          toast('已添加「' + p.name + '」');
+          if (onAdded) onAdded(p);
+          else afterPlaceAdded(dayIndex, p);
+        });
+
+        $('#psManual').addEventListener('click', function () { openManualPlace(dayIndex, onAdded); });
+      }, 'place');
+  }
+
+  function openManualPlace(dayIndex, onAdded) {
+    const day = DAYS[dayIndex];
+    openSheet('手动添加地点', day.dow + ' · ' + day.title,
+      '<div class="field"><label>名称</label><input id="mpName" type="text" placeholder="地点名称"></div>' +
+      '<div class="field"><label>英文名（可选）</label><input id="mpEn" type="text" placeholder="English name"></div>' +
+      '<div class="field"><label>纬度</label>' +
+        '<input id="mpLat" type="number" inputmode="decimal" step="0.0001" placeholder="46.6244"></div>' +
+      '<div class="field"><label>经度</label>' +
+        '<input id="mpLng" type="number" inputmode="decimal" step="0.0001" placeholder="8.0414"></div>' +
+      '<div class="field"><label>备注（可选）</label><input id="mpNote" type="text" placeholder="例如 观景台"></div>' +
+      '<button class="btn block primary" id="mpSave" style="height:46px">' + icon('check') + '保存</button>',
+      function () {
+        $('#mpName').focus();
+        $('#mpSave').addEventListener('click', function () {
+          const name = $('#mpName').value.trim();
+          const lat = parseFloat($('#mpLat').value);
+          const lng = parseFloat($('#mpLng').value);
+          if (!name) { toast('请填写名称'); return; }
+          if (isNaN(lat) || isNaN(lng)) { toast('请填写经纬度'); return; }
+          const p = { name: name, nameEn: $('#mpEn').value.trim(), lat: lat, lng: lng,
+            note: $('#mpNote').value.trim(), kind: 'sight' };
+          STORE.addPlace(day.id, p);
+          refreshAfterEdit();
+          toast('已添加「' + name + '」');
+          if (onAdded) onAdded(p);
+          else afterPlaceAdded(dayIndex, p);
+        });
+      }, 'place');
+  }
+
+  /** after adding a place, offer transport to it — the point of the feature */
+  function afterPlaceAdded(dayIndex, place) {
+    const day = DAYS[dayIndex];
+    const prev = day.places.length > 1 ? day.places[day.places.length - 2] : null;
+    if (!prev) { openDayEditor(dayIndex); return; }
+
+    openSheet('要加一段交通吗？', '已添加「' + place.name + '」',
+      '<div style="font-size:13.5px;line-height:1.7;color:var(--ink-2);margin-bottom:16px">' +
+        '可以查一下从 <b>' + esc(prev.name) + '</b> 到 <b>' + esc(place.name) + '</b> 的可行班次，' +
+        '选中一段直接记进当天行程。' +
+      '</div>' +
+      '<button class="btn block primary" id="apGo" style="height:46px;margin-bottom:9px">' +
+        icon('train') + '查询交通</button>' +
+      '<button class="btn block ghost" id="apSkip">先不用</button>',
+      function () {
+        $('#apGo').addEventListener('click', function () {
+          openTransportPicker(dayIndex, prev, place);
+        });
+        $('#apSkip').addEventListener('click', function () { openDayEditor(dayIndex); });
+      }, 'editor');
+  }
+
+  /* ---------- transport recommender ----------------------------------- */
+  let tpConns = [];
+  let tpOpen = {};
+  let tpRefs = { from: null, to: null };
+
+  function resolveRef(text) {
+    const t = String(text || '').trim();
+    if (!t) return null;
+    const day = DAYS[state.editorDay];
+    const hit = day.places.filter(function (p) {
+      return p.name === t || p.nameEn === t;
+    })[0];
+    if (hit) return { name: hit.name, lat: hit.lat, lng: hit.lng, stationId: hit.stationId || null };
+    const h = hotelById(day.hotelId);
+    if (h && (h.name === t || h.city === t)) return { name: h.name, lat: h.lat, lng: h.lng };
+    return { name: t };
+  }
+
+  function transportFormHtml(day) {
+    const places = day.places.map(function (p) { return p.name; });
+    const quick = places.length
+      ? '<div class="chips-row">' + places.map(function (n) {
+          return '<button class="chip" data-tp-set="' + esc(n) + '">' + esc(n) + '</button>';
+        }).join('') + '</div>'
+      : '';
+
+    return '<div class="field"><label>起点</label>' +
+        '<input id="tpFrom" type="text" placeholder="车站名或地点" autocomplete="off"></div>' +
+      '<div class="field"><label>终点</label>' +
+        '<input id="tpTo" type="text" placeholder="车站名或地点" autocomplete="off"></div>' +
+      (quick ? '<div class="field"><label>当天地点 · 点一下填入终点</label>' + quick + '</div>' : '') +
+      '<div class="tp-when">' +
+        '<div class="field" style="flex:1"><label>日期</label>' +
+          '<input id="tpDate" type="date" value="' + day.date + '"></div>' +
+        '<div class="field" style="flex:1"><label>时间</label>' +
+          '<input id="tpTime" type="time" value="08:00"></div>' +
+      '</div>' +
+      '<button class="btn block primary" id="tpGo" style="height:46px">' +
+        icon('train') + '查询可行班次</button>' +
+      '<div id="tpResults" style="margin-top:14px"></div>' +
+      '<div class="sheet-sep"></div>' +
+      '<button class="btn block ghost" id="tpManual">手动添加一段交通</button>';
+  }
+
+  function renderConnections() {
+    const box = $('#tpResults');
+    if (!box) return;
+    if (!tpConns.length) { box.innerHTML = ''; return; }
+
+    box.innerHTML = '<div class="conn-h">查到 ' + tpConns.length + ' 个班次 · 点「用这段」加入行程</div>' +
+      tpConns.map(function (c, i) {
+        const open = tpOpen[i];
+        return '<div class="conn">' +
+          '<div class="conn-top">' +
+            '<span class="conn-time">' + esc(c.dep) + ' <i>→</i> ' + esc(c.arr) + '</span>' +
+            '<span class="conn-meta">' + esc(c.duration) + ' · ' +
+              (c.transfers ? '换乘 ' + c.transfers + ' 次' : '直达') + '</span>' +
+          '</div>' +
+          '<div class="conn-lines">' + c.lines.map(function (l) {
+            return '<span>' + esc(l) + '</span>';
+          }).join('') + '</div>' +
+          '<div class="conn-path">' + esc(c.fromName) + ' → ' + esc(c.toName) + '</div>' +
+          (open ? '<div class="conn-detail">' + c.sections.map(function (s) {
+            if (s.kind === 'walk') {
+              return '<div class="conn-sec walk">' + icon('swap') + '步行约 ' + s.min + ' 分钟</div>';
+            }
+            return '<div class="conn-sec">' +
+              '<b>' + esc((s.cat + ' ' + s.num).trim()) + '</b>' +
+              '<span>' + esc(s.from) + ' → ' + esc(s.to) + '</span>' +
+              '<span class="conn-plat">' + esc(s.dep) + '–' + esc(s.arr) +
+                (s.platform ? ' · 站台 ' + esc(s.platform) : '') + '</span>' +
+            '</div>';
+          }).join('') + '</div>' : '') +
+          '<div class="conn-acts">' +
+            '<button class="btn sm ghost" data-conn-detail="' + i + '">' +
+              (open ? '收起' : '详情') + '</button>' +
+            '<button class="btn sm primary" data-conn-add="' + i + '">用这段</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+  }
+
+  function openTransportPicker(dayIndex, fromRef, toRef) {
+    state.editorDay = dayIndex;
+    const day = DAYS[dayIndex];
+    tpConns = [];
+    tpOpen = {};
+
+    openSheet('添加交通', day.dow + ' · ' + day.title,
+      transportFormHtml(day),
+      function () {
+        const setFrom = function (v) { const e = $('#tpFrom'); if (e) e.value = v; };
+        const setTo = function (v) { const e = $('#tpTo'); if (e) e.value = v; };
+        if (fromRef) setFrom(fromRef.name || '');
+        if (toRef) setTo(toRef.name || '');
+
+        $('.sheet-inner').addEventListener('click', function (ev) {
+          const chip = ev.target.closest('[data-tp-set]');
+          if (chip) {
+            const cur = $('#tpTo').value.trim();
+            if (!cur) setTo(chip.dataset.tpSet);
+            else setFrom(chip.dataset.tpSet);
+            return;
+          }
+
+          const det = ev.target.closest('[data-conn-detail]');
+          if (det) {
+            const i = Number(det.dataset.connDetail);
+            tpOpen[i] = !tpOpen[i];
+            renderConnections();
+            return;
+          }
+
+          const add = ev.target.closest('[data-conn-add]');
+          if (add) {
+            const c = tpConns[Number(add.dataset.connAdd)];
+            if (!c) return;
+            // label the leg with the traveller's own place names — the raw
+            // station names the API resolves from coordinates are unreadable
+            STORE.addLeg(day.id, {
+              from: (tpRefs.from && tpRefs.from.name) || $('#tpFrom').value.trim(),
+              to: (tpRefs.to && tpRefs.to.name) || $('#tpTo').value.trim(),
+              mode: c.mode || '火车',
+              duration: c.duration,
+              note: c.lines.join(' → '),
+              booked: c.dep,
+              detail: c.sections,
+            });
+            refreshAfterEdit();
+            toast('已加入行程：' + c.dep + ' 出发');
+            openDayEditor(dayIndex);
+            return;
+          }
+
+          if (ev.target.closest('#tpManual')) { openManualLeg(dayIndex); return; }
+        });
+
+        $('#tpGo').addEventListener('click', function () {
+          const from = resolveRef($('#tpFrom').value);
+          const to = resolveRef($('#tpTo').value);
+          if (!from || !to) { toast('请填写起点和终点'); return; }
+
+          const btn = $('#tpGo');
+          btn.disabled = true;
+          btn.innerHTML = '查询中…';
+          $('#tpResults').innerHTML = '<div class="egroup-empty">正在查询瑞士铁路实时班次…</div>';
+
+          tpRefs = { from: from, to: to };
+
+          SERVICES.connections({
+            from: from, to: to,
+            date: $('#tpDate').value || day.date,
+            time: $('#tpTime').value || '08:00',
+            limit: 4,
+          }).then(function (list) {
+            tpConns = list;
+            tpOpen = {};
+            btn.disabled = false;
+            btn.innerHTML = icon('train') + '重新查询';
+            renderConnections();
+          }).catch(function (e) {
+            btn.disabled = false;
+            btn.innerHTML = icon('train') + '查询可行班次';
+            $('#tpResults').innerHTML = '<div class="egroup-empty">' +
+              esc(e.message || '查询失败') + '<br>可以直接用下面的「手动添加一段交通」。</div>';
+          });
+        });
+      }, 'editor');
+  }
+
+  function openManualLeg(dayIndex) {
+    const day = DAYS[dayIndex];
+    openSheet('手动添加交通', day.dow + ' · ' + day.title,
+      '<div class="field"><label>起点</label><input id="mlFrom" type="text" placeholder="例如 酒店"></div>' +
+      '<div class="field"><label>终点</label><input id="mlTo" type="text" placeholder="例如 缆车站"></div>' +
+      '<div class="field"><label>方式</label><input id="mlMode" type="text" placeholder="例如 步行 / 缆车 / 出租车"></div>' +
+      '<div class="field"><label>耗时</label><input id="mlDur" type="text" placeholder="例如 约 15 分钟"></div>' +
+      '<div class="field"><label>已订发车时间（可选）</label>' +
+        '<input id="mlBooked" type="time" value=""></div>' +
+      '<div class="field"><label>备注（可选）</label><input id="mlNote" type="text" placeholder="例如 需提前买票"></div>' +
+      '<button class="btn block primary" id="mlSave" style="height:46px">' + icon('check') + '保存</button>',
+      function () {
+        $('#mlFrom').focus();
+        $('#mlSave').addEventListener('click', function () {
+          const from = $('#mlFrom').value.trim();
+          const to = $('#mlTo').value.trim();
+          if (!from && !to) { toast('请填写起点或终点'); return; }
+          STORE.addLeg(day.id, {
+            from: from, to: to,
+            mode: $('#mlMode').value.trim(),
+            duration: $('#mlDur').value.trim(),
+            note: $('#mlNote').value.trim(),
+            booked: $('#mlBooked').value || null,
+          });
+          refreshAfterEdit();
+          openDayEditor(dayIndex);
+          toast('已添加');
+        });
+      }, 'editor');
+  }
+
   /* ======================== sheets ==================================== */
   let sheetOpen = false;
   let sheetKind = null;
@@ -1048,7 +1615,9 @@
   function openSheet(title, sub, body, after, kind) {
     $('#sheetTitle').textContent = title;
     $('#sheetSub').textContent = sub || '';
-    $('#sheetBody').innerHTML = body;
+    // wrap in a fresh node: anything that binds to `.sheet-inner` is discarded
+    // when the next sheet opens, so listeners never accumulate
+    $('#sheetBody').innerHTML = '<div class="sheet-inner">' + body + '</div>';
     $('#sheet').classList.add('is-open');
     $('#sheetBg').classList.add('is-open');
     sheetOpen = true;
@@ -1465,10 +2034,88 @@
 
       const preset = t.closest('[data-preset]');
       if (preset) {
-        const p = preset.dataset.preset.split('|');
-        addExpense({ amount: Number(p[1]), cat: p[2], note: p[0] });
+        const id = preset.dataset.preset;
+        const p = STORE.presets().filter(function (x) { return x.id === id; })[0];
+        if (!p) return;
+        addExpense({ amount: p.amount, cat: p.cat, note: p.label });
         renderWallet();
-        toast('已记录 ' + p[0] + ' CHF ' + fmtCHF(Number(p[1])));
+        toast('已记录 ' + p.label + ' CHF ' + fmtCHF(p.amount));
+        return;
+      }
+
+      /* ---- expense preset editing ---------------------------------- */
+      const pe = t.closest('[data-preset-edit]');
+      if (pe) {
+        state.presetEdit = pe.dataset.presetEdit === '1';
+        renderWallet();
+        return;
+      }
+      const pdel = t.closest('[data-pdel]');
+      if (pdel) {
+        STORE.removePreset(pdel.dataset.pdel);
+        renderWallet();
+        toast('已删除');
+        return;
+      }
+      const padd = t.closest('[data-padd]');
+      if (padd) {
+        const cats = EXPENSE_CATEGORIES.map(function (c) {
+          return '<option value="' + c.id + '"' + (c.id === 'food' ? ' selected' : '') + '>' +
+            esc(c.label) + '</option>';
+        }).join('');
+        openSheet('添加常用项', '会出现在记账页的一键添加里',
+          '<div class="field"><label>名称</label>' +
+            '<input id="npLabel" type="text" placeholder="例如 缆车往返"></div>' +
+          '<div class="field"><label>分类</label><select id="npCat">' + cats + '</select></div>' +
+          '<div class="field"><label>金额 (CHF)</label>' +
+            '<input id="npAmt" type="number" inputmode="decimal" step="0.05" min="0" placeholder="0.00"></div>' +
+          '<button class="btn block primary" id="npSave" style="height:46px">' + icon('check') + '添加</button>',
+          function () {
+            $('#npLabel').focus();
+            $('#npSave').addEventListener('click', function () {
+              const label = $('#npLabel').value.trim();
+              const amt = parseFloat($('#npAmt').value);
+              if (!label) { toast('请填写名称'); return; }
+              if (!amt || amt <= 0) { toast('请填写金额'); return; }
+              STORE.addPreset({ label: label, amount: amt, cat: $('#npCat').value });
+              closeSheet();
+              renderWallet();
+              toast('已添加');
+            });
+          });
+        return;
+      }
+      const pres = t.closest('[data-preset-reset]');
+      if (pres) {
+        STORE.resetPresets();
+        renderWallet();
+        toast('已恢复默认常用项');
+        return;
+      }
+
+      /* ---- live FX -------------------------------------------------- */
+      const fxr = t.closest('[data-fx-refresh]');
+      if (fxr) {
+        fxr.textContent = '更新中…';
+        fxRefresh(true).then(function (r) {
+          toast('汇率已更新 · 1 CHF ≈ ¥' + r.cny.toFixed(2));
+          renderWallet();
+        });
+        return;
+      }
+
+      /* ---- day editors ---------------------------------------------- */
+      const ed = t.closest('[data-edit-day]');
+      if (ed) { openDayEditor(state.sel); return; }
+
+      const apd = t.closest('[data-add-place-day]');
+      if (apd) { openPlaceSearch(state.sel, null); return; }
+
+      const ald = t.closest('[data-add-leg-day]');
+      if (ald) {
+        const ps = DAYS[state.sel].places;
+        openTransportPicker(state.sel, ps.length ? ps[0] : null,
+          ps.length > 1 ? ps[ps.length - 1] : null);
         return;
       }
 
@@ -1512,8 +2159,8 @@
           '<button class="btn block primary" id="bSave" style="height:46px">保存</button>',
           function () {
             $('#bSave').addEventListener('click', function () {
-              const v = parseFloat($('#bIn').value) || 0;
-              store.set(K.budget, v); closeSheet(); renderWallet(); renderMore(); toast('预算已更新');
+              STORE.setBudget(parseFloat($('#bIn').value) || 0);
+              closeSheet(); renderWallet(); renderMore(); toast('预算已更新');
             });
           });
         return;
@@ -1522,14 +2169,86 @@
       const er = t.closest('[data-edit-rates]');
       if (er) {
         const r = rates();
-        openSheet('参考汇率', '仅用于显示换算，需手动更新',
-          '<div class="field"><label>1 CHF = ? CNY</label><input id="rCny" type="number" step="0.01" value="' + r.cny + '"></div>' +
-          '<div class="field"><label>1 CHF = ? EUR</label><input id="rEur" type="number" step="0.01" value="' + r.eur + '"></div>' +
-          '<button class="btn block primary" id="rSave" style="height:46px">保存</button>',
+        openSheet('手动设置汇率', '平时不用管 —— 会自动取实时汇率',
+          '<div class="field"><label>1 CHF = ? CNY</label>' +
+            '<input id="rCny" type="number" step="0.01" value="' + r.cny + '"></div>' +
+          '<div class="field"><label>1 CHF = ? EUR</label>' +
+            '<input id="rEur" type="number" step="0.01" value="' + r.eur + '"></div>' +
+          '<button class="btn block primary" id="rSave" style="height:46px">保存</button>' +
+          '<button class="btn block ghost" id="rAuto" style="height:46px;margin-top:9px">改回自动获取</button>',
           function () {
             $('#rSave').addEventListener('click', function () {
-              store.set(K.rates, { cny: parseFloat($('#rCny').value) || 8.85, eur: parseFloat($('#rEur').value) || 1.06 });
+              STORE.setRates({
+                cny: parseFloat($('#rCny').value) || 8.85,
+                eur: parseFloat($('#rEur').value) || 1.06,
+                date: zurichToday(),
+                source: '手动设置',
+                at: Date.now(),
+              });
               closeSheet(); renderWallet(); renderMore(); toast('汇率已更新');
+            });
+            $('#rAuto').addEventListener('click', function () {
+              STORE.setRates(null);
+              closeSheet();
+              fxRefresh(true).then(function (x) {
+                renderWallet(); renderMore();
+                toast('已切回实时汇率 · 1 CHF ≈ ¥' + x.cny.toFixed(2));
+              });
+            });
+          });
+        return;
+      }
+
+      /* ---- backup / restore ----------------------------------------- */
+      const bk = t.closest('[data-backup]');
+      if (bk) {
+        const blob = new Blob([STORE.exportJson()], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'swiss-trip-my-edits.json';
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+        toast('已导出备份文件');
+        return;
+      }
+
+      const rs2 = t.closest('[data-restore]');
+      if (rs2) {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'application/json,.json';
+        inp.addEventListener('change', function () {
+          const f = inp.files && inp.files[0];
+          if (!f) return;
+          const rd = new FileReader();
+          rd.onload = function () {
+            try {
+              STORE.importJson(String(rd.result));
+              refreshAfterEdit();
+              toast('已导入备份');
+            } catch (e) { toast('导入失败：' + e.message); }
+          };
+          rd.readAsText(f);
+        });
+        inp.click();
+        return;
+      }
+
+      const ce = t.closest('[data-clear-edits]');
+      if (ce) {
+        openSheet('清空我的修改', '不可撤销',
+          '<div style="font-size:13.5px;line-height:1.7;color:var(--ink-2);margin-bottom:16px">' +
+            '会删除你新增的地点、交通、安排、自定义常用消费，以及被隐藏的项目。' +
+            '行程本身（来自仓库的原始内容）不受影响。' +
+            '<br><br>账目记录和票据照片<b>不会</b>被删除。' +
+          '</div>' +
+          '<button class="btn block primary" id="doClearEdits" style="background:#c0392b">确定清空</button>',
+          function () {
+            $('#doClearEdits').addEventListener('click', function () {
+              STORE.resetAll();
+              closeSheet();
+              refreshAfterEdit();
+              toast('已清空修改');
             });
           });
         return;
@@ -1588,6 +2307,31 @@
       }
     });
 
+    /* ---- preset field edits (fire on blur / enter, not per keystroke) --- */
+    document.addEventListener('change', function (e) {
+      const t = e.target;
+      if (!t || !t.dataset) return;
+
+      if (t.dataset.pamt) {
+        const v = parseFloat(t.value);
+        if (!isNaN(v) && v >= 0) {
+          STORE.updatePreset(t.dataset.pamt, { amount: v }, true);
+          toast('金额已更新为 ' + fmtCHF(v));
+        }
+        return;
+      }
+      if (t.dataset.plabel) {
+        const v = String(t.value).trim();
+        if (v) STORE.updatePreset(t.dataset.plabel, { label: v }, true);
+        return;
+      }
+      if (t.dataset.pcat) {
+        STORE.updatePreset(t.dataset.pcat, { cat: t.value }, true);
+        renderWallet();
+        return;
+      }
+    });
+
     // hash routing
     const hash = (location.hash || '').replace('#', '');
     if (['today', 'itin', 'map', 'wallet', 'more'].indexOf(hash) >= 0) state.view = hash;
@@ -1611,6 +2355,9 @@
 
   /* ======================== boot ====================================== */
   function boot() {
+    // user edits must be merged into DAYS before anything renders
+    STORE.load();
+
     initSel();
     state.mapFilter = String(state.sel);
     bind();
@@ -1633,6 +2380,13 @@
         repaintWeatherSheet();
       });
       WEATHER.refresh();
+    }
+
+    // live CHF rates: cached 12 h, refreshed quietly in the background
+    if (typeof SERVICES !== 'undefined') {
+      fxRefresh(false).then(function () {
+        if (state.view === 'wallet' || state.view === 'more') refreshAfterEdit();
+      });
     }
 
     // offline indicator
