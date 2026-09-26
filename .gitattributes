@@ -1,0 +1,4 @@
+# keep the repo LF-only so GitHub Pages serves exactly what we wrote
+* text=auto eol=lf
+*.png binary
+*.jpg binary

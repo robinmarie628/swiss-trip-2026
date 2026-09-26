@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<meta name="theme-color" content="#e30613" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0f13" media="(prefers-color-scheme: dark)">
+<meta name="description" content="瑞士 8 日行程随身工作台 — 行程、地图、交通、酒店、票据、记账">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="瑞士行">
+<meta name="format-detection" content="telephone=no">
+<title>瑞士行 · 旅行工作台</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<!-- ============================ icon sprite ============================ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-today" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.8v3.4M16 2.8v3.4"/><circle cx="12" cy="14.5" r="2.2"/>
+    </symbol>
+    <symbol id="i-route" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6.5 3.5h11M6.5 9h11M6.5 14.5h7M6.5 20h11"/>
+    </symbol>
+    <symbol id="i-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 3.6 3.8 5.8v14.6L9 18.2l6 2.2 5.2-2.2V3.6L15 5.8 9 3.6Z"/><path d="M9 3.6v14.6M15 5.8v14.6"/>
+    </symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2.8" y="5.5" width="18.4" height="13.5" rx="3.2"/><path d="M2.8 10h18.4"/><circle cx="17" cy="14.6" r="1.15" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-train" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="3.2" width="14" height="13.6" rx="3.4"/><path d="M5 10.5h14M9 20.8l1.6-4M15 20.8l-1.6-4M7.4 20.8h9.2"/><circle cx="9" cy="13.7" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="13.7" r="1" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-cup" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 8h12v6.5a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5V8Z"/><path d="M16.5 9.6h1.6a2.6 2.6 0 0 1 0 5.2h-1.6M4 21.4h13"/>
+    </symbol>
+    <symbol id="i-ticket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 8.2a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1.6a2.2 2.2 0 0 0 0 4.4v1.6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1.6a2.2 2.2 0 0 0 0-4.4V8.2Z"/><path d="M13.6 6.4v11.2" stroke-dasharray="2.4 2.4"/>
+    </symbol>
+    <symbol id="i-bed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2.6 18.4v-12M2.6 12.4h18.8v6M21.4 12.4v-2.6a2 2 0 0 0-2-2h-6.2v4.6"/><circle cx="6.6" cy="9.6" r="1.9"/>
+    </symbol>
+    <symbol id="i-bag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.6 7.6h14.8l-1 12a1.9 1.9 0 0 1-1.9 1.7H7.5a1.9 1.9 0 0 1-1.9-1.7l-1-12Z"/><path d="M8.8 7.6V6a3.2 3.2 0 0 1 6.4 0v1.6"/>
+    </symbol>
+    <symbol id="i-dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="5.4"/></symbol>
+    <symbol id="i-plane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10.2 13.8 3.4 12.2a.7.7 0 0 1-.2-1.2l1.5-1.2 5.6.7 3.6-3.6c.9-.9 2.4-1.2 3-.6s.3 2.1-.6 3l-3.6 3.6.7 5.6-1.2 1.5a.7.7 0 0 1-1.2-.2l-1.6-6.8Z"/>
+    </symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 21.4s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11Z"/><circle cx="12" cy="10.2" r="2.6"/>
+    </symbol>
+    <symbol id="i-nav" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 3.2 3.4 10.4a.6.6 0 0 0 .05 1.12l6.9 2.5 2.5 6.9a.6.6 0 0 0 1.12.05L21 3.2Z"/>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.6l4.8 4.8L19.5 7.2"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.2 2"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.8v3.4M16 2.8v3.4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.6h16M9.4 6.6V4.8a1.4 1.4 0 0 1 1.4-1.4h2.4a1.4 1.4 0 0 1 1.4 1.4v1.8M6.4 6.6l.9 13a1.7 1.7 0 0 0 1.7 1.6h6a1.7 1.7 0 0 0 1.7-1.6l.9-13"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.4 13.6a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 1 0-5.7-5.7L11.8 6.5"/><path d="M13.6 10.4a4 4 0 0 0-5.7 0L5.1 13.2a4 4 0 1 0 5.7 5.7l1.4-1.4"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 16.9v2.6a1.8 1.8 0 0 1-2 1.8 17.6 17.6 0 0 1-7.7-2.7 17.3 17.3 0 0 1-5.3-5.3A17.6 17.6 0 0 1 2.9 5.5a1.8 1.8 0 0 1 1.8-2h2.6a1.8 1.8 0 0 1 1.8 1.6c.1 1 .4 1.9.7 2.8a1.8 1.8 0 0 1-.4 1.9l-1.1 1.1a14 14 0 0 0 5.3 5.3l1.1-1.1a1.8 1.8 0 0 1 1.9-.4c.9.3 1.8.6 2.8.7a1.8 1.8 0 0 1 1.6 1.8Z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.8"/><path d="M12 11v5.4"/><circle cx="12" cy="7.9" r="1.1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-mountain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.4 19.4h19.2L14.4 7.2l-3 5.2-2.2-3.6L2.4 19.4Z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 8.6a2 2 0 0 1 2-2h1.9l1.2-2h7l1.2 2h1.9a2 2 0 0 1 2 2v9.2a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2V8.6Z"/><circle cx="12" cy="13.2" r="3.4"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="3.4" width="7" height="7" rx="1.6"/><rect x="13.6" y="3.4" width="7" height="7" rx="1.6"/><rect x="3.4" y="13.6" width="7" height="7" rx="1.6"/><path d="M13.6 13.6h3v3h-3zM20.6 13.6v3M17 20.6h3.6M13.6 17v3.6"/></symbol>
+    <symbol id="i-wifi-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 8.4a15.4 15.4 0 0 1 5.2-2.7M21.4 8.4a15.4 15.4 0 0 0-6.9-3.1M5.6 12a10.4 10.4 0 0 1 3-1.3M18.4 12a10.4 10.4 0 0 0-2.3-1.1M8.8 15.4a6 6 0 0 1 6.4 0"/><circle cx="12" cy="19" r="1.1" fill="currentColor" stroke="none"/><path d="M3 3l18 18"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5.5l6.5 6.5L9 18.5"/></symbol>
+    <symbol id="i-chev-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 9l6.5 6.5L18.5 9"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.2 4.2h5.6v5.6M19.8 4.2 11.4 12.6"/><path d="M17.6 14v4.6a1.8 1.8 0 0 1-1.8 1.8H5.4a1.8 1.8 0 0 1-1.8-1.8V8.2a1.8 1.8 0 0 1 1.8-1.8H10"/></symbol>
+    <symbol id="i-coins" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="9" cy="6.6" rx="5.4" ry="2.6"/><path d="M3.6 6.6v4c0 1.4 2.4 2.6 5.4 2.6s5.4-1.2 5.4-2.6v-4"/><path d="M14.4 11.4c2.4.3 4.2 1.3 4.2 2.4v3.6c0 1.4-2.4 2.6-5.4 2.6-2 0-3.7-.6-4.6-1.4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.4v2.2M12 19.4v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.4 12h2.2M19.4 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3.2-3.2M20 16H7l3.2 3.2"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 21V3.6M5.4 4.6h11.2l-1.8 4 1.8 4H5.4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4.4" y="10.2" width="15.2" height="10.4" rx="2.6"/><path d="M8 10.2V7.4a4 4 0 0 1 8 0v2.8"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <!-- ============================== header ============================= -->
+  <header class="hdr" id="hdr">
+    <div class="hdr-in">
+      <div class="hdr-brand">
+        <span class="hdr-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M2.5 19.5h19L14 7l-3.2 5.4L8.4 9 2.5 19.5Z" fill="#fff"/><circle cx="18.4" cy="6.6" r="2.3" fill="#fff" opacity=".9"/></svg>
+        </span>
+        <div class="hdr-title">
+          <b>瑞士行 · 工作台</b>
+          <span id="hdrSub">4–11 Oct 2026 · 8 天 7 晚</span>
+        </div>
+      </div>
+      <div class="hdr-right">
+        <div class="clock">
+          <b id="clockTime">--:--</b>
+          <span id="clockZone">瑞士时间</span>
+        </div>
+      </div>
+    </div>
+    <div class="offline" id="offlineBar">
+      <svg width="14" height="14"><use href="#i-wifi-off"/></svg>
+      <span>离线模式 · 行程与票据仍可查看</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============================ TODAY ============================= -->
+    <section class="view is-active" id="view-today" data-view="today">
+      <div class="hero" id="hero"></div>
+      <div class="dayscroll" id="dayChips"></div>
+      <div id="todayBody"></div>
+    </section>
+
+    <!-- =========================== ITINERARY ========================== -->
+    <section class="view" id="view-itin" data-view="itin">
+      <div class="pad" style="padding-top:14px">
+        <div class="seg" id="itinSeg">
+          <button class="is-on" data-mode="cards">卡片</button>
+          <button data-mode="table">总览表</button>
+        </div>
+      </div>
+      <div id="itinBody"></div>
+    </section>
+
+    <!-- ============================= MAP ============================== -->
+    <section class="view" id="view-map" data-view="map">
+      <div style="padding-top:12px">
+        <div class="mapwrap full" style="position:relative">
+          <div class="map-overlay top">
+            <div class="map-legend" id="mapLegend"></div>
+          </div>
+          <div id="map"></div>
+        </div>
+      </div>
+      <div class="sec" style="margin-top:18px">
+        <div class="sec-head"><h2 id="mapListTitle">本日地点</h2><span class="more" id="mapCount"></span></div>
+        <div class="card"><div class="card-bd tight" id="mapPlaces"></div></div>
+      </div>
+      <div class="sec">
+        <div class="card">
+          <div class="card-bd">
+            <div class="btn-row">
+              <button class="btn sm ghost" data-map-action="fit">缩放到全部</button>
+              <button class="btn sm ghost" data-map-action="route">显示路线</button>
+              <button class="btn sm ghost" data-map-action="terrain">切换地形图</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ WALLET ============================ -->
+    <section class="view" id="view-wallet" data-view="wallet">
+      <div style="padding-top:14px">
+        <div class="pad">
+          <div class="seg" id="walletSeg">
+            <button class="is-on" data-mode="ledger">记账</button>
+            <button data-mode="tickets">票据</button>
+          </div>
+        </div>
+      </div>
+      <div id="walletBody"></div>
+    </section>
+
+    <!-- ============================= MORE ============================= -->
+    <section class="view" id="view-more" data-view="more">
+      <div id="moreBody"></div>
+    </section>
+  </main>
+
+  <!-- ========================== bottom nav =========================== -->
+  <nav class="nav">
+    <div class="nav-in" id="nav">
+      <button data-go="today" class="is-on"><svg><use href="#i-today"/></svg><span>今日</span></button>
+      <button data-go="itin"><svg><use href="#i-route"/></svg><span>行程</span></button>
+      <button data-go="map"><svg><use href="#i-map"/></svg><span>地图</span></button>
+      <button data-go="wallet"><svg><use href="#i-wallet"/></svg><span>钱包</span></button>
+      <button data-go="more"><svg><use href="#i-more"/></svg><span>更多</span></button>
+    </div>
+  </nav>
+
+  <!-- FAB -->
+  <button class="fab" id="fab" hidden>
+    <svg><use href="#i-plus"/></svg><span>记一笔</span>
+  </button>
+
+  <!-- ============================== sheet ============================ -->
+  <div class="sheet-bg" id="sheetBg"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true">
+    <div class="sheet-grip"></div>
+    <div class="sheet-hd">
+      <div>
+        <h3 id="sheetTitle">标题</h3>
+        <div class="sub" id="sheetSub"></div>
+      </div>
+      <button class="sheet-x" id="sheetX" aria-label="关闭"><svg><use href="#i-x"/></svg></button>
+    </div>
+    <div class="sheet-bd" id="sheetBody"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="assets/vendor/leaflet/leaflet.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

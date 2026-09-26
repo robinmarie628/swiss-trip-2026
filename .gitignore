@@ -1,0 +1,9 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# personal ticket scans — never commit
+private/
+*.qr.png
+tickets-private/
