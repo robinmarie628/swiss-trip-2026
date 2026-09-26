@@ -319,10 +319,52 @@
       '<div class="card-bd tight">' + timelineBare(day) + '</div></div>';
   }
 
-  function transportCard(day, title) {
+  function transportCard(day, title, withAll) {
+    const right = withAll
+      ? '<div class="rt"><button class="btn sm ghost" data-all-bookings="1">全部车次</button></div>'
+      : '';
     return '<div class="card">' +
-      cardHead(regionOf(day), 'train', title || '交通', '时间均为约数 · 以 SBB App 为准') +
+      cardHead(regionOf(day), 'train', title || '交通', '时间均为约数 · 以 SBB App 为准', right) +
       '<div class="card-bd tight">' + legsBare(day) + '</div></div>';
+  }
+
+  /* ---- all booked connections + flights, as a sheet ------------------ */
+  function bookingsSheetHtml() {
+    return '<div style="margin:-4px 0 10px;font-size:10.5px;font-weight:800;letter-spacing:.08em;' +
+        'text-transform:uppercase;color:var(--faint)">已订车次 · ' + BOOKINGS.length + ' 段</div>' +
+      '<div class="card"><div class="card-bd tight">' +
+        BOOKINGS.map(function (b) {
+          const di = dayIndexByDate(b.date);
+          const d = di >= 0 ? DAYS[di] : null;
+          const r = d ? regionOf(d) : REGIONS.transit;
+          return '<div class="leg" style="' + tintStyle(r) + '">' +
+            '<div class="leg-rail"><span class="nub"></span><span class="bar"></span></div>' +
+            '<div class="leg-body">' +
+              '<div class="leg-route">' + esc(b.from) + ' <span class="arrow">→</span> ' + esc(b.to) + '</div>' +
+              '<div class="leg-meta"><span>' + esc(b.dow) + ' ' + esc(b.date.slice(5).replace('-', '/')) + '</span>' +
+                '<span class="sep"></span><span>出发 ' + esc(b.dep) + '</span></div>' +
+              '<div class="leg-booked">' + icon('check') + '<span>已预订</span>' +
+                '<span class="t">' + esc(b.dep) + '</span></div>' +
+            '</div>' +
+          '</div>';
+        }).join('') +
+      '</div></div>' +
+      '<div style="margin:20px 0 10px;font-size:10.5px;font-weight:800;letter-spacing:.08em;' +
+        'text-transform:uppercase;color:var(--faint)">航班</div>' +
+      '<div class="card"><div class="card-bd tight">' +
+        FLIGHTS.map(function (f) {
+          return '<div class="kv"><span class="k">' + esc(f.direction.replace(/ · .*/, '')) + '</span>' +
+            '<span class="v">' + esc(f.code) + ' · ' + esc(f.date.slice(5).replace('-', '/')) +
+            ' · ' + esc(f.dep) + ' → ' + esc(f.arr) + '</span></div>';
+        }).join('') +
+      '</div></div>' +
+      '<div class="btn-row" style="margin-top:16px">' +
+        '<button class="btn block primary" data-open-link="https://www.sbb.ch/en">' +
+          icon('ext') + '打开 SBB 官网</button>' +
+      '</div>' +
+      '<div style="margin-top:12px;display:flex;gap:8px;font-size:11.5px;line-height:1.6;color:var(--muted)">' +
+        icon('info') + '<span>发车前请以 SBB Mobile App 上的实时站台与时间为准。</span>' +
+      '</div>';
   }
 
   function hotelCard(day) {
@@ -354,7 +396,7 @@
     html += hotelCard(day);
     html += '</div><div class="sec">' + timelineCard(day) + '</div>';
 
-    html += '<div class="sec">' + transportCard(day, booked.length ? '交通 · 含已订车次' : '交通') + '</div>';
+    html += '<div class="sec">' + transportCard(day, booked.length ? '交通 · 含已订车次' : '交通', true) + '</div>';
     html += '<div class="sec">' + placesCard(day) + '</div>';
     html += '<div class="sec">' + tipsCard(day) + '</div>';
 
@@ -1376,6 +1418,12 @@
         bd.style.display = open ? 'none' : 'block';
         const chev = toggleDay.querySelector('.place-go');
         if (chev) chev.style.transform = open ? 'rotate(90deg)' : 'rotate(-90deg)';
+        return;
+      }
+
+      const ab = t.closest('[data-all-bookings]');
+      if (ab) {
+        openSheet('交通总览', 'SBB 已订车次与航班', bookingsSheetHtml());
         return;
       }
 
