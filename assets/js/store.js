@@ -18,13 +18,18 @@
   function blank() {
     return {
       version: 1,
-      places: {},    // dayId -> [place]
-      legs: {},      // dayId -> [leg]
-      blocks: {},    // dayId -> [block]
-      hidden: {},    // dayId -> [key]
-      presets: null, // null => fall back to EXPENSE_PRESETS
+      places: {},        // dayId -> [place]
+      legs: {},          // dayId -> [leg]
+      blocks: {},        // dayId -> [block]
+      hidden: {},        // dayId -> [key]
+      photoSpots: [],    // user-added photo spots
+      hiddenPhotos: [],  // curated photo-spot ids the user hid
+      photoVisible: true,
+      order: {},         // dayId -> { b: [key], p: [key], t: [key] }
+      sortMode: {},      // dayId -> 'auto' | 'manual'
+      presets: null,     // null => fall back to EXPENSE_PRESETS
       budget: null,
-      rates: null,   // { cny, eur, date, source, at }
+      rates: null,       // { cny, eur, date, source, at }
     };
   }
 
@@ -58,8 +63,11 @@
       if (raw) {
         const parsed = JSON.parse(raw);
         data = Object.assign(blank(), parsed || {});
-        ['places', 'legs', 'blocks', 'hidden'].forEach(function (k) {
-          if (!data[k] || typeof data[k] !== 'object') data[k] = {};
+        ['places', 'legs', 'blocks', 'hidden', 'order', 'sortMode'].forEach(function (k) {
+          if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {};
+        });
+        ['photoSpots', 'hiddenPhotos'].forEach(function (k) {
+          if (!Array.isArray(data[k])) data[k] = [];
         });
       }
     } catch (e) { data = blank(); }
@@ -77,12 +85,51 @@
   function onChange(fn) { subs.push(fn); }
 
   /* ---------- merge --------------------------------------------------- */
+  /* Period labels rank like a rough clock so an auto-sorted timeline puts
+     "上午" before "下午" without the traveller typing a time. */
+  const PERIOD_RANK = {
+    '清晨': 330, '早上': 420, '上午': 540, '中午': 720, '午间': 720,
+    '下午': 840, '傍晚': 1080, '晚上': 1200, '夜里': 1320, '深夜': 1380,
+  };
+
+  function timeRank(t) {
+    const s = String(t == null ? '' : t).trim();
+    const m = /^(\d{1,2})\s*[:：]\s*(\d{2})/.exec(s);
+    if (m) return Number(m[1]) * 60 + Number(m[2]);
+    for (const k in PERIOD_RANK) { if (s.indexOf(k) >= 0) return PERIOD_RANK[k]; }
+    return null;                       // "灵活" / custom text — keeps manual position
+  }
+
+  /** reorder `list` to follow a stored key sequence; unknown keys sink to the end */
+  function applyOrder(list, keys, keyFn) {
+    if (!keys || !keys.length) return list;
+    const rank = {};
+    keys.forEach(function (k, i) { rank[k] = i; });
+    return list.slice().sort(function (a, b) {
+      const ia = rank[keyFn(a)];
+      const ib = rank[keyFn(b)];
+      return (ia == null ? 1e6 : ia) - (ib == null ? 1e6 : ib);
+    });
+  }
+
+  function autoSortByTime(list) {
+    return list.slice().sort(function (a, b) {
+      const ra = timeRank(a.time);
+      const rb = timeRank(b.time);
+      if (ra == null && rb == null) return 0;      // stable: keep insertion order
+      if (ra == null) return 1;
+      if (rb == null) return -1;
+      return ra - rb;
+    });
+  }
+
   function resolved(i) {
     snapshot();
     const d = DAYS[i];
     const id = d.id;
     const b = base[i];
     const hidden = data.hidden[id] || [];
+    const ord = data.order[id] || {};
 
     const keep = function (kind) {
       return function (item) { return hidden.indexOf(keyOf(kind, item)) < 0; };
@@ -94,11 +141,58 @@
       });
     };
 
-    return {
-      places: b.places.filter(keep('p')).concat(add('places', 'p')),
-      transport: b.transport.filter(keep('t')).concat(add('legs', 't')),
-      blocks: b.blocks.filter(keep('b')).concat(add('blocks', 'b')),
-    };
+    let blocks = b.blocks.filter(keep('b')).concat(add('blocks', 'b'));
+    const places = applyOrder(b.places.filter(keep('p')).concat(add('places', 'p')), ord.p,
+      function (x) { return x.name; });
+    const transport = applyOrder(b.transport.filter(keep('t')).concat(add('legs', 't')), ord.t,
+      function (x) { return x.from + '→' + x.to; });
+
+    // timeline: auto by clock/period unless the traveller has dragged it
+    if (sortMode(id) === 'manual') {
+      blocks = applyOrder(blocks, ord.b, function (x) { return x.time + '|' + x.label; });
+    } else {
+      blocks = autoSortByTime(blocks);
+    }
+
+    return { places: places, transport: transport, blocks: blocks };
+  }
+
+  function sortMode(dayId) {
+    return data.sortMode[dayId] === 'manual' ? 'manual' : 'auto';
+  }
+
+  function setSortMode(dayId, mode) {
+    if (mode === 'auto') {
+      delete data.sortMode[dayId];
+      if (data.order[dayId]) delete data.order[dayId].b;
+    } else {
+      data.sortMode[dayId] = 'manual';
+    }
+    save();
+  }
+
+  /** persist a manual order; `keys` is the full sequence of item keys */
+  function setOrder(dayId, kind, keys) {
+    if (!data.order[dayId]) data.order[dayId] = {};
+    data.order[dayId][kind] = keys.slice();
+    if (kind === 'b') data.sortMode[dayId] = 'manual';
+    save();
+  }
+
+  function clearOrder(dayId, kind) {
+    if (data.order[dayId]) delete data.order[dayId][kind];
+    save();
+  }
+
+  /** keys for the current merged order of a kind */
+  function orderKeys(dayId, kind) {
+    const i = DAYS.map(function (d) { return d.id; }).indexOf(dayId);
+    if (i < 0) return [];
+    const r = resolved(i);
+    const list = kind === 'p' ? r.places : kind === 't' ? r.transport : r.blocks;
+    return list.map(function (x) {
+      return kind === 'p' ? x.name : kind === 't' ? (x.from + '→' + x.to) : (x.time + '|' + x.label);
+    });
   }
 
   /** write the merged content back into DAYS so all renderers see it */
@@ -236,6 +330,49 @@
   function rates() { return data.rates; }
   function setRates(r) { data.rates = r; save(); }
 
+  /* ---------- photo spots --------------------------------------------- */
+  function allPhotoSpots() {
+    const curated = (typeof PHOTO_SPOTS !== 'undefined' ? PHOTO_SPOTS : [])
+      .filter(function (s) { return data.hiddenPhotos.indexOf(s.id) < 0; })
+      .map(function (s) { return Object.assign({}, s, { _curated: true }); });
+    const mine = data.photoSpots.map(function (s) {
+      return Object.assign({}, s, { _user: true });
+    });
+    return curated.concat(mine);
+  }
+
+  function photoSpotsForDay(dayId) {
+    return allPhotoSpots().filter(function (s) { return !s.day || s.day === dayId; });
+  }
+
+  function addPhotoSpot(spot) {
+    data.photoSpots.push({
+      id: 'up' + Date.now().toString(36),
+      day: spot.day || null,
+      region: spot.region || null,
+      name: spot.name,
+      nameEn: spot.nameEn || '',
+      lat: spot.lat,
+      lng: spot.lng,
+      best: spot.best || '',
+      tip: spot.tip || '',
+    });
+    save();
+  }
+
+  /** user-added spots are deleted; curated ones are hidden (restorable) */
+  function removePhotoSpot(id) {
+    const i = data.photoSpots.map(function (s) { return s.id; }).indexOf(id);
+    if (i >= 0) data.photoSpots.splice(i, 1);
+    else if (data.hiddenPhotos.indexOf(id) < 0) data.hiddenPhotos.push(id);
+    save();
+  }
+
+  function restorePhotos() { data.hiddenPhotos = []; save(); }
+  function setPhotoVisible(v) { data.photoVisible = !!v; save(); }
+  function photosVisible() { return data.photoVisible !== false; }
+  function hiddenPhotoCount() { return data.hiddenPhotos.length; }
+
   /* ---------- backup -------------------------------------------------- */
   function exportJson() {
     return JSON.stringify({
@@ -268,6 +405,7 @@
     Object.keys(data.blocks).forEach(function (k) { blocks += data.blocks[k].length; });
     Object.keys(data.hidden).forEach(function (k) { hidden += data.hidden[k].length; });
     return { places: places, legs: legs, blocks: blocks, hidden: hidden,
+      photos: data.photoSpots.length, hiddenPhotos: data.hiddenPhotos.length,
       hasCustomPresets: Array.isArray(data.presets) };
   }
 
@@ -281,6 +419,14 @@
     budget: budget, setBudget: setBudget, rates: rates, setRates: setRates,
     exportJson: exportJson, importJson: importJson, resetAll: resetAll,
     stats: stats, keyOf: keyOf,
+    /* ordering */
+    timeRank: timeRank, sortMode: sortMode, setSortMode: setSortMode,
+    setOrder: setOrder, clearOrder: clearOrder, orderKeys: orderKeys,
+    /* photo spots */
+    allPhotoSpots: allPhotoSpots, photoSpotsForDay: photoSpotsForDay,
+    addPhotoSpot: addPhotoSpot, removePhotoSpot: removePhotoSpot,
+    restorePhotos: restorePhotos, setPhotoVisible: setPhotoVisible,
+    photosVisible: photosVisible, hiddenPhotoCount: hiddenPhotoCount,
     raw: function () { return data; },
   };
 })(window);

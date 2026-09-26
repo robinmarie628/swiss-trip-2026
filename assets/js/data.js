@@ -629,3 +629,177 @@ const WX_CLOTHING = [
   { min: 3,  text: '保暖内衣 + 厚外套或薄羽绒' },
   { min: -99, text: '羽绒服 + 帽子、手套、围巾' },
 ];
+
+/* ---- recommended photo spots -------------------------------------------
+   Coordinates resolved via OpenStreetMap / Nominatim. `best` is when and from
+   where to shoot; `day` ties a spot to the itinerary so the map can filter.
+   ---------------------------------------------------------------------- */
+const PHOTO_SPOTS = [
+  /* --- Day 1 · Geneva --- */
+  { id: 'ph1', day: 'd1', region: 'geneva', name: '大喷泉', nameEn: "Jet d'Eau",
+    lat: 46.20738, lng: 6.15589, best: '清晨顺光，从 Bains des Pâquis 一侧拍水柱与湖面',
+    tip: '水柱高 140 米。风大时会溅到岸上，镜头注意防水。' },
+  { id: 'ph2', day: 'd1', region: 'geneva', name: '旧城圣彼得大教堂塔顶', nameEn: 'Cathedrale Saint-Pierre tower',
+    lat: 46.20109, lng: 6.1485, best: '上午顺光，登塔俯拍旧城红色屋顶与湖',
+    tip: '塔楼需买票，台阶较窄，上午人少。' },
+  { id: 'ph3', day: 'd1', region: 'geneva', name: 'Bourg-de-Four 广场', nameEn: 'Place du Bourg-de-Four',
+    lat: 46.20032, lng: 6.14914, best: '傍晚金色光线，喷泉与露天咖啡座',
+    tip: '旧城最古老的广场，傍晚人多但光线最好。' },
+  { id: 'ph4', day: 'd1', region: 'geneva', name: '断椅', nameEn: 'Broken Chair',
+    lat: 46.2228, lng: 6.13885, best: '任何时间，低角度拍出巨大的尺度感',
+    tip: '联合国门前，纪念地雷受害者的地标。' },
+
+  /* --- Day 2 · Geneva → Grindelwald (train day) --- */
+  { id: 'ph5', day: 'd2', region: 'alps', name: '施皮茨城堡', nameEn: 'Schloss Spiez',
+    lat: 46.689379, lng: 7.687468, best: '列车经过时靠右窗；下车可拍城堡与图恩湖',
+    tip: '从日内瓦到因特拉肯的车窗右侧，图恩湖段最美。' },
+  { id: 'ph6', day: 'd2', region: 'alps', name: 'Iseltwald 码头', nameEn: 'Iseltwald pier',
+    lat: 46.71046, lng: 7.96346, best: '上午无风时拍倒影',
+    tip: '《爱的迫降》取景地，从因特拉肯坐 103 路公交约 15 分钟。' },
+  { id: 'ph7', day: 'd2', region: 'alps', name: 'Harder Kulm 观景台', nameEn: 'Harder Kulm',
+    lat: 46.69968, lng: 7.85614, best: '傍晚，拍因特拉肯两湖与少女峰剪影',
+    tip: '斜坡火车上去约 10 分钟，山顶有悬空观景台。' },
+
+  /* --- Day 3 · Grindelwald First --- */
+  { id: 'ph8', day: 'd3', region: 'alps', name: '巴赫阿尔卑湖倒影', nameEn: 'Bachalpsee',
+    lat: 46.66958, lng: 8.02095, best: '清晨 9-10 点风小、湖面平静时最好',
+    tip: '从 First 步行约 50 分钟。早上云少，午后起风就拍不到倒影了。' },
+  { id: 'ph9', day: 'd3', region: 'alps', name: 'First 悬崖步道', nameEn: 'First Cliff Walk',
+    lat: 46.66033, lng: 8.05301, best: '上午，悬崖边拍人像与艾格尔峰',
+    tip: '铁索悬崖步道，风大时注意帽子和手机。' },
+  { id: 'ph10', day: 'd3', region: 'alps', name: '艾格尔山北壁（Grosse Scheidegg）', nameEn: 'Grosse Scheidegg',
+    lat: 46.65588, lng: 8.10187, best: '下午顺光，拍北壁全景',
+    tip: '从 First 再往前的高地，能看到整面艾格尔北壁。' },
+  { id: 'ph11', day: 'd3', region: 'alps', name: '冰川峡谷', nameEn: 'Gletscherschlucht',
+    lat: 46.611, lng: 8.05029, best: '正午，峡谷里光线最好时才能拍出水色',
+    tip: '进入峡谷要带防水外套，水汽很大。' },
+
+  /* --- Day 4 · Lauterbrunnen valley --- */
+  { id: 'ph12', day: 'd4', region: 'valley', name: '施陶河瀑布', nameEn: 'Staubbach Falls',
+    lat: 46.589776, lng: 7.905429, best: '下午至黄昏，从村里拍瀑布与教堂',
+    tip: '近 300 米高。村口小山坡上的角度最经典。' },
+  { id: 'ph13', day: 'd4', region: 'valley', name: '特吕默尔巴赫瀑布', nameEn: 'Trummelbach Falls',
+    lat: 46.57005, lng: 7.91303, best: '上午到午前，洞内漫射光较强',
+    tip: '洞内禁止三脚架，很湿滑，穿防滑鞋。' },
+  { id: 'ph14', day: 'd4', region: 'valley', name: '劳特布龙嫩谷地全景', nameEn: 'Lauterbrunnen valley view',
+    lat: 46.5939, lng: 7.9078, best: '清晨有雾时最有层次',
+    tip: '从 Wengen 下来的列车窗口就能拍到整条谷地。' },
+  { id: 'ph15', day: 'd4', region: 'valley', name: '翁根村', nameEn: 'Wengen',
+    lat: 46.60544, lng: 7.92172, best: '傍晚，木屋与山谷同框',
+    tip: '无汽车小镇，上山只能坐火车。' },
+  { id: 'ph16', day: 'd4', region: 'valley', name: '米伦村', nameEn: 'Murren',
+    lat: 46.55914, lng: 7.89288, best: '晴天下 午，正对雪山三峰',
+    tip: '在悬崖上的无车小镇，观景台看少女峰最正。' },
+
+  /* --- Day 5 · Zurich --- */
+  { id: 'ph17', day: 'd5', region: 'zurich', name: 'Lindenhof 小丘', nameEn: 'Lindenhof',
+    lat: 47.37292, lng: 8.54018, best: '傍晚，拍旧城屋顶与利马特河',
+    tip: '老城高处的小广场，有石棋盘，可以坐一会儿。' },
+  { id: 'ph18', day: 'd5', region: 'zurich', name: '苏黎世大教堂塔顶', nameEn: 'Grossmunster tower',
+    lat: 47.37012, lng: 8.54391, best: '上午，登塔拍利马特河与老城',
+    tip: '双塔可以上去，台阶很多，但视野是老城最好的。' },
+  { id: 'ph19', day: 'd5', region: 'zurich', name: '苏黎世湖畔（Bürkliplatz）', nameEn: 'Burkliplatz',
+    lat: 47.36638, lng: 8.54119, best: '日落前后，湖面与远山',
+    tip: '可以从这里坐游船，也是看夕阳的好位置。' },
+  { id: 'ph20', day: 'd5', region: 'zurich', name: 'Polyterrasse 平台', nameEn: 'Polyterrasse',
+    lat: 47.37617, lng: 8.54671, best: '黄昏与夜景，俯瞰老城全景',
+    tip: 'ETH 前的平台，坐 Polybahn 红色小缆车上去很有意思。' },
+
+  /* --- Day 6 · Rhine Falls --- */
+  { id: 'ph21', day: 'd6', region: 'zurich', name: '莱茵瀑布观景台', nameEn: 'Rheinfall',
+    lat: 47.67836, lng: 8.61487, best: '上午，水量大时最壮观',
+    tip: '欧洲最大的瀑布。坐船到岩石上能最近距离看。' },
+  { id: 'ph22', day: 'd6', region: 'zurich', name: '劳芬城堡', nameEn: 'Schloss Laufen',
+    lat: 47.6768, lng: 8.61485, best: '下午，从城堡侧拍瀑布全景',
+    tip: '城堡内有悬空观景廊，可以走到瀑布正上方。' },
+];
+
+/* ---- travel phrasebook (Chinese / English / German) ---------------------
+   Offline by design: this is the part that has to work with no signal.
+   ---------------------------------------------------------------------- */
+const PHRASE_GROUPS = [
+  {
+    id: 'transport', label: '交通出行', labelEn: 'Transport', icon: 'train',
+    items: [
+      ['请问去……怎么走？', 'How do I get to …?', 'Wie komme ich nach …?'],
+      ['这趟车去苏黎世吗？', 'Does this train go to Zurich?', 'Fährt dieser Zug nach Zürich?'],
+      ['单程票 / 往返票', 'One way / return', 'Einfach / Hin und zurück'],
+      ['我要去机场', 'I would like to go to the airport', 'Ich möchte zum Flughafen'],
+      ['下一班是几点？', 'What time is the next one?', 'Wann fährt der nächste?'],
+      ['在哪个站台？', 'Which platform is it?', 'Auf welchem Gleis?'],
+      ['需要换乘吗？', 'Do I need to change?', 'Muss ich umsteigen?'],
+      ['这班车取消了吗？', 'Is this service cancelled?', 'Fällt dieser Zug aus?'],
+    ],
+  },
+  {
+    id: 'food', label: '点餐饮食', labelEn: 'Food & drink', icon: 'coins',
+    items: [
+      ['两位，谢谢', 'A table for two, please', 'Einen Tisch für zwei, bitte'],
+      ['请给我菜单', 'Could I see the menu?', 'Könnte ich die Speisekarte haben?'],
+      ['有中文菜单吗？', 'Do you have a Chinese menu?', 'Haben Sie eine chinesische Speisekarte?'],
+      ['我要这个', 'I will have this one', 'Ich nehme das'],
+      ['不要猪肉', 'No pork, please', 'Ohne Schweinefleisch, bitte'],
+      ['我对……过敏', 'I am allergic to …', 'Ich bin allergisch gegen …'],
+      ['买单，谢谢', 'The bill, please', 'Die Rechnung, bitte'],
+      ['可以刷卡吗？', 'Can I pay by card?', 'Kann ich mit Karte zahlen?'],
+    ],
+  },
+  {
+    id: 'hotel', label: '住宿', labelEn: 'Hotel', icon: 'bed',
+    items: [
+      ['我预订了房间', 'I have a reservation', 'Ich habe eine Reservierung'],
+      ['几点可以入住？', 'What time is check-in?', 'Ab wann kann ich einchecken?'],
+      ['可以寄存行李吗？', 'Can I leave my luggage here?', 'Kann ich mein Gepäck aufbewahren?'],
+      ['房间的 Wi-Fi 密码是？', 'What is the Wi-Fi password?', 'Wie lautet das WLAN-Passwort?'],
+      ['房间里没有热水', 'There is no hot water in my room', 'In meinem Zimmer gibt es kein warmes Wasser'],
+      ['可以晚一点退房吗？', 'Could I have a late check-out?', 'Kann ich später auschecken?'],
+      ['请帮我叫一辆出租车', 'Could you call me a taxi?', 'Könnten Sie mir ein Taxi rufen?'],
+    ],
+  },
+  {
+    id: 'shopping', label: '购物付款', labelEn: 'Shopping', icon: 'coins',
+    items: [
+      ['多少钱？', 'How much is it?', 'Wie viel kostet das?'],
+      ['太贵了，可以便宜点吗？', 'That is expensive — any discount?', 'Das ist teuer — geht da noch etwas?'],
+      ['我可以试穿吗？', 'Can I try it on?', 'Kann ich das anprobieren?'],
+      ['可以退税吗？', 'Can I get a tax refund?', 'Bekomme ich die Mehrwertsteuer zurück?'],
+      ['只要这个', 'Just this one, please', 'Nur das, bitte'],
+      ['请给我发票', 'Could I have a receipt?', 'Könnte ich eine Quittung haben?'],
+      ['有更大的尺码吗？', 'Do you have a bigger size?', 'Haben Sie eine grössere Grösse?'],
+    ],
+  },
+  {
+    id: 'ask', label: '问路求助', labelEn: 'Asking for help', icon: 'pin',
+    items: [
+      ['请问洗手间在哪里？', 'Where is the toilet?', 'Wo ist die Toilette?'],
+      ['可以帮我拍张照吗？', 'Could you take a photo for me?', 'Könnten Sie ein Foto von mir machen?'],
+      ['我听不懂，请说慢一点', 'I do not understand — please speak slowly', 'Ich verstehe nicht — bitte sprechen Sie langsam'],
+      ['你会说英语吗？', 'Do you speak English?', 'Sprechen Sie Englisch?'],
+      ['这里可以拍照吗？', 'May I take photos here?', 'Darf ich hier fotografieren?'],
+      ['我迷路了', 'I am lost', 'Ich habe mich verirrt'],
+    ],
+  },
+  {
+    id: 'sight', label: '观光', labelEn: 'Sightseeing', icon: 'map',
+    items: [
+      ['门票多少钱？', 'How much is the ticket?', 'Wie viel kostet der Eintritt?'],
+      ['学生有折扣吗？', 'Is there a student discount?', 'Gibt es einen Studentenrabatt?'],
+      ['缆车今天运行吗？', 'Is the cable car running today?', 'Fährt die Seilbahn heute?'],
+      ['最后一班下山是几点？', 'When is the last descent?', 'Wann geht die letzte Talfahrt?'],
+      ['山顶天气怎么样？', 'What is the weather like at the top?', 'Wie ist das Wetter oben?'],
+      ['这个观景台怎么走？', 'How do I get to this viewpoint?', 'Wie komme ich zu diesem Aussichtspunkt?'],
+    ],
+  },
+  {
+    id: 'sos', label: '紧急情况', labelEn: 'Emergency', icon: 'sos',
+    items: [
+      ['请帮帮我！', 'Please help me!', 'Bitte helfen Sie mir!'],
+      ['叫救护车', 'Call an ambulance', 'Rufen Sie einen Krankenwagen'],
+      ['叫警察', 'Call the police', 'Rufen Sie die Polizei'],
+      ['我需要医生', 'I need a doctor', 'Ich brauche einen Arzt'],
+      ['我的护照丢了', 'I have lost my passport', 'Ich habe meinen Pass verloren'],
+      ['我的钱包被偷了', 'My wallet has been stolen', 'Meine Geldbörse wurde gestohlen'],
+      ['最近的医院在哪里？', 'Where is the nearest hospital?', 'Wo ist das nächste Krankenhaus?'],
+    ],
+  },
+];

@@ -93,6 +93,7 @@
     mapDirty: false,
     presetEdit: false,
     editorDay: 0,
+    sorting: null,      // { dayId, kind } while long-press reordering
   };
 
   function dayIndexByDate(iso) {
@@ -229,15 +230,30 @@
   }
 
   /* ---- bare content ------------------------------------------------- */
-  function timelineBare(day) {
+  /** ↑/↓ controls shown while a list is in sorting mode */
+  function sortBtns(kind, key) {
+    return '<div class="sortbtns">' +
+      '<button class="sortbtn" data-move-kind="' + kind + '" data-move-dir="-1" ' +
+        'data-move-key="' + esc(key) + '" aria-label="上移">' + icon('up') + '</button>' +
+      '<button class="sortbtn" data-move-kind="' + kind + '" data-move-dir="1" ' +
+        'data-move-key="' + esc(key) + '" aria-label="下移">' + icon('down') + '</button>' +
+    '</div>';
+  }
+
+  function timelineBare(day, sorting) {
     return '<div class="tl">' + day.blocks.map(function (b) {
       const dup = String(b.label) === String(b.time);
-      return '<div class="tl-item">' +
+      const key = b.time + '|' + b.label;
+      // data-hold is always present: it is the long-press target that *starts*
+      // sorting mode, so it cannot depend on sorting already being on
+      return '<div class="tl-item' + (sorting ? ' is-sortable' : '') + '"' +
+        ' data-hold="1" data-sort-key="' + esc(key) + '">' +
         '<div class="tl-time">' + esc(b.time) + '</div>' +
         '<div class="tl-body">' +
           (dup ? '' : '<div class="tl-label">' + esc(b.label) + '</div>') +
           '<div class="tl-text">' + esc(b.text) + '</div>' +
         '</div>' +
+        (sorting ? sortBtns('b', key) : '') +
       '</div>';
     }).join('') + '</div>';
   }
@@ -296,17 +312,21 @@
     '</div>';
   }
 
-  function placesBare(day, di) {
+  function placesBare(day, di, sorting) {
     const r = regionOf(day);
     const idx = di == null ? state.sel : di;
     return day.places.map(function (p, i) {
-      return '<button class="place" data-place="' + idx + ':' + i + '" style="' + tintStyle(r) + '">' +
-        '<span class="place-ic">' +
-          icon(p.kind === 'transit' ? 'train' : (p.kind === 'area' ? 'map' : 'pin')) + '</span>' +
-        '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' + esc(p.nameEn) +
-          (p.note ? ' · ' + esc(p.note) : '') + '</span></span>' +
-        '<span class="place-go">' + icon('chev') + '</span>' +
-      '</button>';
+      return '<div class="place-row' + (sorting ? ' is-sortable' : '') + '"' +
+        ' data-hold="1" data-sort-key="' + esc(p.name) + '">' +
+        '<button class="place" data-place="' + idx + ':' + i + '" style="' + tintStyle(r) + '">' +
+          '<span class="place-ic">' +
+            icon(p.kind === 'transit' ? 'train' : (p.kind === 'area' ? 'map' : 'pin')) + '</span>' +
+          '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' + esc(p.nameEn) +
+            (p.note ? ' · ' + esc(p.note) : '') + '</span></span>' +
+          '<span class="place-go">' + icon('chev') + '</span>' +
+        '</button>' +
+        (sorting ? sortBtns('p', p.name) : '') +
+      '</div>';
     }).join('');
   }
 
@@ -318,11 +338,15 @@
 
   /* ---- card wrappers ------------------------------------------------ */
   function timelineCard(day) {
+    const sorting = sortingThis('b', day.id);
+    const auto = STORE.sortMode(day.id) === 'auto';
+    const sub = sorting ? '' : (auto ? '长按可调整顺序 · 现在按时间自动排' : '长按可调整顺序 · 当前为手动顺序');
     return '<div class="card">' +
       cardHead(regionOf(day), 'clock', '今日行程', day.headline,
         '<div class="rt"><button class="btn sm ghost" data-edit-day="1">' +
           icon('plus') + '编辑</button></div>') +
-      '<div class="card-bd tight">' + timelineBare(day) + '</div></div>';
+      (sorting ? sortBarHtml(day.id, 'b') : '<div class="card-note">' + esc(sub) + '</div>') +
+      '<div class="card-bd tight" id="tlList">' + timelineBare(day, sorting) + '</div></div>';
   }
 
   function transportCard(day, title, withAll) {
@@ -383,12 +407,14 @@
   }
 
   function placesCard(day, title) {
+    const sorting = sortingThis('p', day.id);
     return '<div class="card">' +
       cardHead(regionOf(day), 'pin', title || '今日地点', '共 ' + day.places.length + ' 处',
         '<div class="rt"><button class="btn sm ghost" data-add-place-day="1">' +
           icon('plus') + '添加</button></div>') +
-      '<div class="card-bd tight">' +
-        (day.places.length ? placesBare(day) : '<div class="egroup-empty">还没有地点，点「添加」搜索</div>') +
+      (sorting ? sortBarHtml(day.id, 'p') : '<div class="card-note">长按地点可调整顺序</div>') +
+      '<div class="card-bd tight" id="placeList">' +
+        (day.places.length ? placesBare(day, null, sorting) : '<div class="egroup-empty">还没有地点，点「添加」搜索</div>') +
       '</div></div>';
   }
 
@@ -424,6 +450,10 @@
     $('#todayBody').innerHTML = html;
     renderHero();
     renderChips();
+
+    // long-press to reorder the timeline and the place list
+    attachHold($('#tlList'), day.id, 'b');
+    attachHold($('#placeList'), day.id, 'p');
   }
 
   /* ======================== ITINERARY VIEW ============================ */
@@ -573,6 +603,45 @@
       '</div>';
   }
 
+  /** red camera pin — photo spots are a different shape and colour from the
+      numbered stop pins so they never read as part of the walking route */
+  function makePhotoPin() {
+    return L.divIcon({
+      className: '',
+      html: '<div class="pin photo">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.2-2h7.2l1.2 2h1.7A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5Z"/>' +
+        '<circle cx="12" cy="13" r="3.6"/></svg></div>',
+      // the pin is a teardrop rotated -45°, so its tip sits ~6px below the box
+      iconSize: [28, 28],
+      iconAnchor: [14, 34],
+      popupAnchor: [0, -34],
+    });
+  }
+
+  function photoPopupHtml(s) {
+    const u = navUrl(s.lat, s.lng, s.name);
+    return '<b>' + esc(s.name) + '</b>' +
+      (s.nameEn ? '<div class="pop-sub">' + esc(s.nameEn) + '</div>' : '') +
+      (s.best ? '<div class="pop-note">最佳时机 · ' + esc(s.best) + '</div>' : '') +
+      (s.tip ? '<div class="pop-note">' + esc(s.tip) + '</div>' : '') +
+      '<div class="pop-acts">' +
+        '<a class="btn sm primary" href="' + u.google + '" target="_blank" rel="noopener">导航</a>' +
+        '<button class="btn sm ghost" data-photo-hide="' + esc(s.id) + '">' +
+          (s._user ? '删除' : '隐藏') + '</button>' +
+      '</div>';
+  }
+
+  /** which photo spots to draw for the current map filter */
+  function photoSpotsInView(days) {
+    if (!STORE.photosVisible()) return [];
+    const ids = days.map(function (i) { return DAYS[i].id; });
+    return STORE.allPhotoSpots().filter(function (s) {
+      return !s.day || ids.indexOf(s.day) >= 0;
+    });
+  }
+
   function renderMapLegend() {
     const st = tripStatus();
     const items = [{ id: 'all', label: '全部' }].concat(DAYS.map(function (d, i) {
@@ -675,6 +744,15 @@
       });
     }
 
+    // photo spots are drawn last so they sit above the route lines
+    const spots = photoSpotsInView(days);
+    spots.forEach(function (s) {
+      L.marker([s.lat, s.lng], { icon: makePhotoPin(), zIndexOffset: 400 })
+        .addTo(overlayGroup)
+        .bindPopup(photoPopupHtml(s));
+      allPts.push([s.lat, s.lng]);
+    });
+
     if (allPts.length) {
       try {
         map.fitBounds(L.latLngBounds(allPts).pad(0.16), { maxZoom: isAll ? 9 : 13 });
@@ -711,8 +789,40 @@
       });
       return out;
     }).join('');
-    $('#mapPlaces').innerHTML = html || '<div class="empty">暂无地点</div>';
-    $('#mapCount').textContent = n + ' 个点';
+
+    /* ---- photo spots, grouped after the places ---- */
+    const spots = photoSpotsInView(days);
+    let photoHtml = '';
+    if (spots.length) {
+      photoHtml = '<div style="padding:16px 0 6px;font-size:11px;font-weight:800;' +
+        'letter-spacing:.06em;text-transform:uppercase;color:#d03a2f">拍照点 · ' + spots.length + ' 处</div>' +
+        spots.map(function (s) {
+          const dn = s.day ? (DAYS.filter(function (d) { return d.id === s.day; })[0] || {}) : null;
+          return '<div class="place photo-row">' +
+            '<button class="place-main" data-maplot="' + s.lat + ',' + s.lng + '">' +
+              '<span class="place-ic" style="--tint:#d03a2f;--tint-soft:#fdeceb">' + icon('camera') + '</span>' +
+              '<span class="place-tx"><b>' + esc(s.name) + '</b><span>' +
+                esc([s.nameEn, s.best || (dn ? dn.dow : '')].filter(Boolean).join(' · ')) +
+              '</span></span>' +
+            '</button>' +
+            '<button class="photo-x" data-photo-hide="' + esc(s.id) + '" aria-label="隐藏">' +
+              icon('x') + '</button>' +
+          '</div>';
+        }).join('');
+    }
+
+    $('#mapPlaces').innerHTML = (html + photoHtml) || '<div class="empty">暂无地点</div>';
+    $('#mapCount').textContent = (n + spots.length) + ' 个点';
+
+    const bar = $('#mapPhotoBar');
+    if (bar) {
+      const hidden = STORE.hiddenPhotoCount();
+      bar.innerHTML =
+        '<button class="btn sm ghost" data-photo-toggle="1">' +
+          (STORE.photosVisible() ? '隐藏拍照点' : '显示拍照点') + '</button>' +
+        '<button class="btn sm ghost" data-photo-add="1">' + icon('plus') + '加拍照点</button>' +
+        (hidden ? '<button class="btn sm ghost" data-photo-restore="1">恢复 ' + hidden + ' 个</button>' : '');
+    }
   }
 
   /* ======================== WALLET ==================================== */
@@ -1608,6 +1718,415 @@
       }, 'editor');
   }
 
+  /* ======================== TRANSLATE ================================= */
+
+  const LANGS = [
+    { id: 'zh', label: '中文', code: 'zh-CN' },
+    { id: 'en', label: 'English', code: 'en' },
+    { id: 'de', label: 'Deutsch', code: 'de' },
+  ];
+
+  const tr = { from: 'zh', to: 'de', group: 'transport', q: '', busy: false, result: null, error: null };
+
+  function langCode(id) {
+    const l = LANGS.filter(function (x) { return x.id === id; })[0];
+    return l ? l.code : 'en';
+  }
+
+  function trFetch(url, ms) {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(function () { ctl.abort(); }, ms || 9000) : null;
+    return fetch(url, { mode: 'cors', credentials: 'omit', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { if (timer) clearTimeout(timer); return r; })
+      .catch(function (e) { if (timer) clearTimeout(timer); throw e; });
+  }
+
+  /**
+   * Try the keyless endpoints in order of quality. Google's gtx endpoint gives
+   * the best results but is unreachable from some networks; MyMemory is the
+   * reliable fallback (though it cannot translate *out of* Chinese).
+   */
+  function translateText(text, from, to) {
+    const q = String(text || '').trim();
+    if (!q) return Promise.reject(new Error('请先输入要翻译的内容'));
+
+    const engines = [
+      {
+        name: 'Google 翻译',
+        run: function () {
+          return trFetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=' +
+            encodeURIComponent(langCode(from)) + '&tl=' + encodeURIComponent(langCode(to)) +
+            '&dt=t&q=' + encodeURIComponent(q))
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (j) {
+              const out = (j[0] || []).map(function (x) { return x && x[0]; }).filter(Boolean).join('');
+              if (!out) throw new Error('empty');
+              return out;
+            });
+        },
+      },
+      {
+        name: 'MyMemory',
+        run: function () {
+          return trFetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q) +
+            '&langpair=' + encodeURIComponent(langCode(from)) + '|' + encodeURIComponent(langCode(to)))
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (j) {
+              const out = j && j.responseData && j.responseData.translatedText;
+              if (!out || /MYMEMORY WARNING/i.test(out)) throw new Error('unsupported');
+              return out;
+            });
+        },
+      },
+    ];
+
+    return engines.reduce(function (chain, eng) {
+      return chain.catch(function () {
+        return eng.run().then(function (text2) {
+          return { text: text2, engine: eng.name };
+        });
+      });
+    }, Promise.reject(new Error('start')));
+  }
+
+  function phraseGroups() {
+    return typeof PHRASE_GROUPS === 'undefined' ? [] : PHRASE_GROUPS;
+  }
+
+  function phraseMatches(q) {
+    const query = String(q || '').trim().toLowerCase();
+    const all = [];
+    phraseGroups().forEach(function (g) {
+      g.items.forEach(function (it) {
+        all.push({ group: g, zh: it[0], en: it[1], de: it[2] });
+      });
+    });
+    if (!query) return null;
+    return all.filter(function (p) {
+      return (p.zh + ' ' + p.en + ' ' + p.de).toLowerCase().indexOf(query) >= 0;
+    });
+  }
+
+  function renderTranslate() {
+    const box = $('#translateBody');
+    if (!box) return;
+
+    const found = phraseMatches(tr.q);
+    const groups = phraseGroups();
+    const activeGroup = groups.filter(function (g) { return g.id === tr.group; })[0] || groups[0];
+
+    const list = found || (activeGroup ? activeGroup.items.map(function (it) {
+      return { group: activeGroup, zh: it[0], en: it[1], de: it[2] };
+    }) : []);
+
+    box.innerHTML =
+      /* ---- free translation ---- */
+      '<div class="sec" style="margin-top:16px">' +
+        '<div class="card"><div class="card-bd">' +
+          '<div class="tr-head">' +
+            '<button class="tr-lang" data-tr-from="' + tr.from + '">' + esc(langLabel(tr.from)) + '</button>' +
+            '<button class="tr-swap" data-tr-swap="1" aria-label="互换">' + icon('swap') + '</button>' +
+            '<button class="tr-lang" data-tr-to="' + tr.to + '">' + esc(langLabel(tr.to)) + '</button>' +
+          '</div>' +
+          '<textarea id="trInput" class="tr-input" rows="3" ' +
+            'placeholder="输入要翻译的内容…">' + esc(tr.q) + '</textarea>' +
+          '<button class="btn block primary" id="trGo" style="height:46px"' +
+            (tr.busy ? ' disabled' : '') + '>' +
+            (tr.busy ? '翻译中…' : icon('globe') + '翻译') + '</button>' +
+          (tr.result ? '<div class="tr-out"><b>' + esc(tr.result.text) + '</b>' +
+            '<span>由 ' + esc(tr.result.engine) + ' 提供</span></div>' : '') +
+          (tr.error ? '<div class="tr-err">' + esc(tr.error) +
+            '<div class="btn-row" style="margin-top:10px">' +
+              '<a class="btn sm ghost" target="_blank" rel="noopener" href="' +
+                trExternal('google') + '">用 Google 翻译打开</a>' +
+              '<a class="btn sm ghost" target="_blank" rel="noopener" href="' +
+                trExternal('deepl') + '">用 DeepL 打开</a>' +
+            '</div>' +
+            '<div style="margin-top:8px;font-size:11.5px;line-height:1.6;color:var(--muted)">' +
+              '免费翻译接口不稳定，点上面两个按钮会用手机浏览器打开完整翻译页面，' +
+              '文字已经帮你填好了。' +
+            '</div>' +
+          '</div>' : '') +
+        '</div></div>' +
+      '</div>' +
+
+      /* ---- phrasebook ---- */
+      '<div class="sec">' +
+        '<div class="sec-head"><h2>旅行常用短语</h2>' +
+          '<span class="more">' + (found ? found.length + ' 条结果' : '离线可用') + '</span></div>' +
+        '<div class="field" style="margin-bottom:12px">' +
+          '<input id="trSearch" type="search" placeholder="搜索短语（中文 / English / Deutsch）" ' +
+            'autocomplete="off" value="' + esc(tr.q) + '">' +
+        '</div>' +
+        (found ? '' :
+          '<div class="chips-row" style="margin-bottom:12px">' + groups.map(function (g) {
+            return '<button class="chip' + (g.id === activeGroup.id ? ' is-on' : '') + '" ' +
+              'data-tr-group="' + g.id + '">' + esc(g.label) + '</button>';
+          }).join('') + '</div>') +
+        '<div class="tr-list">' +
+          (list.length ? list.map(function (p, i) {
+            return '<button class="tr-phrase" data-tr-big="' + i + '">' +
+              '<span class="tr-zh">' + esc(p.zh) + '</span>' +
+              '<span class="tr-en">' + esc(p.en) + '</span>' +
+              '<span class="tr-de">' + esc(p.de) + '</span>' +
+            '</button>';
+          }).join('') : '<div class="empty">没有匹配的短语</div>') +
+        '</div>' +
+      '</div>' +
+      '<div class="sec"><div class="card"><div class="card-bd">' +
+        '<div style="font-size:11.5px;line-height:1.7;color:var(--muted)">' +
+          '短语手册是内置的，<b>没网也能用</b> —— 直接点开一条，把屏幕给对方看就行。' +
+          '瑞士德语区日常说德语，大部分人也能听懂英语；法语区（日内瓦）法语为主，英语通用。' +
+        '</div>' +
+      '</div></div></div>';
+
+    trList = list;
+    wireTranslate();
+  }
+
+  let trList = [];
+
+  function langLabel(id) {
+    const l = LANGS.filter(function (x) { return x.id === id; })[0];
+    return l ? l.label : id;
+  }
+
+  function nextLang(id, dir) {
+    const i = LANGS.map(function (l) { return l.id; }).indexOf(id);
+    const n = ((i < 0 ? 0 : i) + (dir || 1) + LANGS.length) % LANGS.length;
+    return LANGS[n].id;
+  }
+
+  /* ---- add a photo spot ---------------------------------------------- */
+  let phResults = [];
+
+  function renderPhResults(list, stillSearching) {
+    const box = $('#phResults');
+    if (!box) return;
+    if (!list.length) {
+      box.innerHTML = '<div class="egroup-empty">' +
+        (stillSearching ? '搜索中…' : '没找到，换个关键词') + '</div>';
+      return;
+    }
+    box.innerHTML =
+      (stillSearching ? '<div class="egroup-empty" style="margin-bottom:8px">已找到 ' +
+        list.length + ' 个，继续搜索中…</div>' : '') +
+      list.map(function (p, i) {
+        return '<button class="place" data-ph-add="' + i + '">' +
+          '<span class="place-ic" style="--tint:#d03a2f;--tint-soft:#fdeceb">' + icon('camera') + '</span>' +
+          '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' +
+            esc((p.source === 'station' ? '车站' : '地点') + ' · ' +
+              p.lat.toFixed(4) + ', ' + p.lng.toFixed(4)) +
+          '</span></span>' +
+          '<span class="place-go">' + icon('plus') + '</span>' +
+        '</button>';
+      }).join('');
+  }
+
+  function openPhotoAdd() {
+    const day = DAYS[state.sel];
+    phResults = [];
+    let timer = null;
+    let seq = 0;
+
+    openSheet('添加拍照点', day.dow + ' · ' + day.title,
+      '<div class="field"><label>搜索地点</label>' +
+        '<input id="phQuery" type="search" placeholder="Bachalpsee / 观景台 / 车站名" ' +
+          'autocomplete="off" autocapitalize="off">' +
+      '</div>' +
+      '<div id="phResults"><div class="egroup-empty">输入至少 2 个字开始搜索</div></div>' +
+      '<div class="sheet-sep"></div>' +
+      '<div class="field"><label>拍摄备注（可选）</label>' +
+        '<input id="phTip" type="text" placeholder="例如 清晨逆光，用长焦压缩">' +
+      '</div>' +
+      '<div style="font-size:11.5px;line-height:1.65;color:var(--muted)">' +
+        '选一个地点就会在地图上标成红色相机图标，只属于这一天。' +
+      '</div>',
+      function () {
+        const q = $('#phQuery');
+        if (!q) return;
+        q.focus();
+        q.addEventListener('input', function () {
+          clearTimeout(timer);
+          const v = q.value.trim();
+          const mine = ++seq;
+          if (v.length < 2) {
+            $('#phResults').innerHTML = '<div class="egroup-empty">输入至少 2 个字开始搜索</div>';
+            return;
+          }
+          $('#phResults').innerHTML = '<div class="egroup-empty">搜索中…</div>';
+          timer = setTimeout(function () {
+            SERVICES.searchPlacesStreaming(v, function (list, finished) {
+              if (mine !== seq) return;
+              phResults = list;
+              renderPhResults(list, !finished);
+            });
+          }, 380);
+        });
+
+        $('#phResults').addEventListener('click', function (ev) {
+          const b = ev.target.closest('[data-ph-add]');
+          if (!b) return;
+          const p = phResults[Number(b.dataset.phAdd)];
+          if (!p) return;
+          STORE.addPhotoSpot({
+            day: day.id, region: day.region,
+            name: p.name, nameEn: p.nameEn,
+            lat: p.lat, lng: p.lng,
+            tip: ($('#phTip') || {}).value.trim(), best: '',
+          });
+          closeSheet();
+          refreshAfterEdit();
+          if (state.mapReady) renderMapContent();
+          toast('已添加拍照点「' + p.name + '」');
+        });
+      }, 'place');
+  }
+
+  function trExternal(which) {
+    const q = tr.q || '';
+    if (which === 'deepl') {
+      return 'https://www.deepl.com/translator#' + tr.from + '/' + tr.to + '/' + encodeURIComponent(q);
+    }
+    return 'https://translate.google.com/?sl=' + langCode(tr.from) + '&tl=' + langCode(tr.to) +
+      '&text=' + encodeURIComponent(q) + '&op=translate';
+  }
+
+  function wireTranslate() {
+    const inp = $('#trInput');
+    if (inp) {
+      inp.addEventListener('input', function () { tr.q = inp.value; });
+    }
+    const search = $('#trSearch');
+    if (search) {
+      let t = null;
+      search.addEventListener('input', function () {
+        clearTimeout(t);
+        const v = search.value;
+        t = setTimeout(function () {
+          tr.q = v;
+          const box = $('#translateBody');
+          const scroll = window.scrollY;
+          renderTranslate();
+          window.scrollTo(0, scroll);
+        }, 220);
+      });
+    }
+    const go = $('#trGo');
+    if (go) {
+      go.addEventListener('click', function () {
+        tr.q = ($('#trInput') || {}).value || tr.q;
+        tr.busy = true; tr.error = null; tr.result = null;
+        renderTranslate();
+        translateText(tr.q, tr.from, tr.to).then(function (r) {
+          tr.busy = false; tr.result = r; renderTranslate();
+        }).catch(function (e) {
+          tr.busy = false;
+          tr.error = (e && e.message === '请先输入要翻译的内容') ? e.message : '在线翻译接口暂时不可用';
+          renderTranslate();
+        });
+      });
+    }
+  }
+
+  /* ---- big-display sheet, for showing someone your screen ---- */
+  function openPhrase(idx) {
+    const p = trList[idx];
+    if (!p) return;
+    const row = function (label, text, cls) {
+      return '<div class="big-line ' + cls + '"><span class="big-lang">' + label + '</span>' +
+        '<b>' + esc(text) + '</b></div>';
+    };
+    openSheet('给对方看', p.group ? p.group.label : '短语',
+      row('中文', p.zh, 'zh') + row('English', p.en, 'en') + row('Deutsch', p.de, 'de') +
+      '<div style="margin-top:14px;font-size:11.5px;line-height:1.6;color:var(--muted)">' +
+        '把手机转过去给对方看即可，不需要联网。' +
+      '</div>', null, 'phrase');
+  }
+
+  /* ======================== reordering ================================ */
+
+  /** move one item one slot up (-1) or down (+1) in a day's list */
+  function moveKey(dayId, kind, key, dir) {
+    const keys = STORE.orderKeys(dayId, kind);
+    const i = keys.indexOf(key);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= keys.length) return false;
+    const next = keys.slice();
+    next.splice(i, 1);
+    next.splice(j, 0, key);
+    STORE.setOrder(dayId, kind, next);
+    return true;
+  }
+
+  function sortingThis(kind, dayId) {
+    return state.sorting && state.sorting.kind === kind && state.sorting.dayId === dayId;
+  }
+
+  function sortBarHtml(dayId, kind) {
+    const auto = STORE.sortMode(dayId) === 'auto';
+    return '<div class="sortbar">' +
+      '<span class="sortbar-tx">' +
+        icon('sort') + '排序模式 · 用 ↑↓ 调整' +
+      '</span>' +
+      (kind === 'b' && !auto
+        ? '<button class="btn sm ghost" data-sort-auto="1">按时间排序</button>'
+        : '') +
+      '<button class="btn sm primary" data-sort-done="1">完成</button>' +
+    '</div>';
+  }
+
+  /** attach long-press-to-sort to a freshly rendered list */
+  function attachHold(container, dayId, kind) {
+    if (!container) return;
+    let timer = null, startY = 0, startX = 0, fired = false;
+
+    const cancel = function () {
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+
+    container.addEventListener('pointerdown', function (e) {
+      if (state.sorting) return;
+      const row = e.target.closest('[data-hold]');
+      if (!row) return;
+      // ignore the control buttons inside a row, but allow the row itself even
+      // when it is a <button> (place rows are), so a tap still opens it
+      if (e.target.closest('.sortbtn, .photo-x, .ledger-del, .place-go')) return;
+      startY = e.clientY; startX = e.clientX;
+      fired = false;
+      cancel();
+      timer = setTimeout(function () {
+        timer = null;
+        fired = true;
+        state.sorting = { dayId: dayId, kind: kind };
+        if (navigator.vibrate) { try { navigator.vibrate(14); } catch (err) {} }
+        renderToday();
+        toast('已进入排序模式');
+      }, 480);
+    });
+    container.addEventListener('pointermove', function (e) {
+      if (!timer) return;
+      if (Math.abs(e.clientY - startY) > 10 || Math.abs(e.clientX - startX) > 10) cancel();
+    });
+    container.addEventListener('pointerup', cancel);
+    container.addEventListener('pointercancel', cancel);
+    container.addEventListener('pointerleave', cancel);
+
+    // swallow the click that follows a long-press, so it does not also open
+    // whatever the row normally opens
+    container.addEventListener('click', function (e) {
+      if (fired) {
+        fired = false;
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+
+    container.addEventListener('contextmenu', function (e) {
+      if (e.target.closest('[data-hold]')) e.preventDefault();
+    });
+  }
+
   /* ======================== sheets ==================================== */
   let sheetOpen = false;
   let sheetKind = null;
@@ -1857,6 +2376,7 @@
 
     if (v === 'today') renderToday();
     if (v === 'itin') renderItin();
+    if (v === 'translate') renderTranslate();
     if (v === 'wallet') { renderWallet(); if (state.walletMode === 'tickets') renderSlots(); }
     if (v === 'more') renderMore();
     if (v === 'map') {
@@ -2119,6 +2639,90 @@
         return;
       }
 
+      /* ---- reordering ------------------------------------------------ */
+      const mv = t.closest('[data-move-kind]');
+      if (mv && state.sorting) {
+        const moved = moveKey(state.sorting.dayId, mv.dataset.moveKind,
+          mv.dataset.moveKey, Number(mv.dataset.moveDir));
+        if (moved) {
+          renderToday();
+          toast('顺序已保存');
+        } else {
+          toast(mv.dataset.moveDir === '-1' ? '已经是最上面了' : '已经是最下面了');
+        }
+        return;
+      }
+
+      const sd = t.closest('[data-sort-done]');
+      if (sd) { state.sorting = null; renderToday(); return; }
+
+      const sa = t.closest('[data-sort-auto]');
+      if (sa && state.sorting) {
+        STORE.setSortMode(state.sorting.dayId, 'auto');
+        state.sorting = null;
+        renderToday();
+        toast('已改回按时间排序');
+        return;
+      }
+
+      /* ---- photo spots ----------------------------------------------- */
+      const pt = t.closest('[data-photo-toggle]');
+      if (pt) {
+        STORE.setPhotoVisible(!STORE.photosVisible());
+        renderMapContent();
+        toast(STORE.photosVisible() ? '已显示拍照点' : '已隐藏拍照点');
+        return;
+      }
+      const pa = t.closest('[data-photo-add]');
+      if (pa) { openPhotoAdd(); return; }
+      const prst = t.closest('[data-photo-restore]');
+      if (prst) {
+        STORE.restorePhotos();
+        renderMapContent();
+        toast('已恢复隐藏的拍照点');
+        return;
+      }
+      const ph = t.closest('[data-photo-hide]');
+      if (ph) {
+        const wasUser = STORE.allPhotoSpots().filter(function (s) {
+          return s.id === ph.dataset.photoHide;
+        })[0];
+        STORE.removePhotoSpot(ph.dataset.photoHide);
+        if (map) map.closePopup();
+        renderMapContent();
+        toast(wasUser && wasUser._user ? '已删除' : '已隐藏，可点「恢复」找回');
+        return;
+      }
+
+      /* ---- translation ----------------------------------------------- */
+      const tg = t.closest('[data-tr-group]');
+      if (tg) { tr.group = tg.dataset.trGroup; tr.q = ''; renderTranslate(); return; }
+      const tb = t.closest('[data-tr-big]');
+      if (tb) { openPhrase(Number(tb.dataset.trBig)); return; }
+      const ts = t.closest('[data-tr-swap]');
+      if (ts) {
+        const a = tr.from; tr.from = tr.to; tr.to = a;
+        tr.result = null; tr.error = null;
+        renderTranslate();
+        return;
+      }
+      const tfrom = t.closest('[data-tr-from]');
+      if (tfrom) {
+        tr.from = nextLang(tr.from, 1);
+        if (tr.from === tr.to) tr.to = nextLang(tr.from, 1);
+        tr.result = null; tr.error = null;
+        renderTranslate();
+        return;
+      }
+      const tto = t.closest('[data-tr-to]');
+      if (tto) {
+        tr.to = nextLang(tr.to, 1);
+        if (tr.to === tr.from) tr.from = nextLang(tr.to, 1);
+        tr.result = null; tr.error = null;
+        renderTranslate();
+        return;
+      }
+
       const del = t.closest('[data-del-exp]');
       if (del) {
         saveExpenses(expenses().filter((x) => x.id !== del.dataset.delExp));
@@ -2354,7 +2958,14 @@
   }
 
   /* ======================== boot ====================================== */
+  let booted = false;
+
   function boot() {
+    // guard against a double DOMContentLoaded: registering the delegated
+    // listeners twice would make every tap fire twice
+    if (booted) return;
+    booted = true;
+
     // user edits must be merged into DAYS before anything renders
     STORE.load();
 
