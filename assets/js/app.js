@@ -1600,9 +1600,11 @@
             'Token 只保存在这台手机里。' +
           '</div>' +
           '</div>' +
+        '</div>' +
 
-          /* sharing */
-          '<div class="sec-head" style="margin-top:18px"><h2>分享给朋友</h2>' +
+        /* sharing — its own section */
+        '<div class="sec">' +
+          '<div class="sec-head"><h2>分享给朋友</h2>' +
             '<span class="more">' + (appRepo() ? '公开' : '不可用') + '</span></div>' +
           '<div class="card"><div class="card-bd tight">' +
             (appRepo()
