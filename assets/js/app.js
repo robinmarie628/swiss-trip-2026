@@ -188,18 +188,38 @@
    * takes over (app not installed) we fall back to the web version in a NEW
    * tab, so the workbench itself is never replaced.
    */
-  function openAppScheme(scheme, fallbackUrl) {
+  function openAppScheme(scheme, fallbackUrl, appName) {
+    const name = appName || 'App';
     let left = false;
     const onVis = function () { if (document.hidden) left = true; };
     document.addEventListener('visibilitychange', onVis);
+    // A navigation is not a popup, so this is NOT blocked by popup blockers —
+    // which is what makes it work when the route was resolved asynchronously.
     try { window.location.href = scheme; } catch (e) {}
     setTimeout(function () {
       document.removeEventListener('visibilitychange', onVis);
       if (!left && !document.hidden && fallbackUrl) {
-        toast('没打开小红书 App，改用网页版');
+        toast('没打开' + name + '，改用网页版');
         openExternal(fallbackUrl);
       }
     }, 1600);
+  }
+
+  /**
+   * SBB Mobile's own URL scheme — the exact target SBB's universal-link landing
+   * page forwards to (seen on app.sbbmobile.ch/timetable: "Open the link" →
+   * sbbmobile://timetable?…). Used whenever the route was resolved after an
+   * await, where a programmatic window.open / anchor click is popup-blocked.
+   */
+  function sbbScheme(fromSt, toSt) {
+    const o = encodeURIComponent((fromSt && fromSt.name) || '');
+    const d = encodeURIComponent((toSt && toSt.name) || '');
+    return 'sbbmobile://timetable?from=' + o + '&to=' + d;
+  }
+
+  /** hand two stops to SBB Mobile, falling back to the web timetable */
+  function openSbbApp(fromSt, toSt) {
+    openAppScheme(sbbScheme(fromSt, toSt), sbbUrl(fromSt, toSt), 'SBB App');
   }
 
   /**
@@ -1097,8 +1117,10 @@
       if (!rides.length) { toast('这两点之间没有查到班次，可能步行即可'); return; }
       const board = rides[0].from;
       const alight = rides[rides.length - 1].to;
-      openExternal(sbbUrl({ name: board }, { name: alight }));
-      toast('已在 SBB 搜索：' + board + ' → ' + alight);
+      // the route took a network round-trip, so a window.open here would be
+      // popup-blocked — go through SBB's app scheme instead
+      openSbbApp({ name: board }, { name: alight });
+      toast('已按最优路线 ' + board + ' → ' + alight);
     }).catch(function (e) {
       toast((e && e.message) || '规划失败，请重试');
     });
@@ -2191,7 +2213,7 @@
             if (!c) return;
             const st = connectionStations(c);
             if (!st.board || !st.alight) { toast('这段没有可用的车站名'); return; }
-            openExternal(sbbUrl({ name: st.board }, { name: st.alight }));
+            openSbbApp({ name: st.board }, { name: st.alight });
             toast('已在 SBB 搜索：' + st.board + ' → ' + st.alight);
             return;
           }
@@ -3600,7 +3622,7 @@
       const xhsBtn = t.closest('[data-xhs]');
       if (xhsBtn) {
         const q = xhsBtn.dataset.xhs;
-        openAppScheme(xhsScheme(q), xhsUrl(q));
+        openAppScheme(xhsScheme(q), xhsUrl(q), '小红书');
         return;
       }
 
