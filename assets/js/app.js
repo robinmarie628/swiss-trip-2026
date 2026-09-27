@@ -59,6 +59,17 @@
     return p.year + '-' + p.month + '-' + p.day;
   }
 
+  /** Beijing time (China Standard Time, UTC+8, no DST) — independent of the trip TZ */
+  function beijingParts(d) {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+    const o = {};
+    fmt.formatToParts(d || new Date()).forEach((p) => { if (p.type !== 'literal') o[p.type] = p.value; });
+    if (o.hour === '24') o.hour = '00';
+    return o;
+  }
+
   /** whole days from ISO date a to ISO date b */
   function dayDiff(a, b) {
     return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
@@ -3251,6 +3262,11 @@
 
     const h = Number(p.hour);
     $('#clockZone').textContent = h < 6 ? '瑞士 · 凌晨' : h < 12 ? '瑞士 · 上午' : h < 18 ? '瑞士 · 下午' : '瑞士 · 晚上';
+
+    // Beijing time, shown alongside the Swiss clock in the header top-right
+    const b = beijingParts();
+    const be = $('#bjTime');
+    if (be) be.textContent = b.hour + ':' + b.minute;
   }
 
   /* ======================== boot ====================================== */

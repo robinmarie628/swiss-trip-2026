@@ -170,6 +170,15 @@ svg { display: block; }
 .clock b { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.02em; }
 .clock span { display: block; font-size: 9.5px; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
 
+/* second clock in the header: Beijing time, separated from the Swiss one */
+.clock-bj {
+  padding-left: 9px;
+  margin-left: 1px;
+  border-left: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.clock-bj b { color: #e8453c; }
+.clock-bj span { text-transform: none; letter-spacing: 0; }
+
 /* ---------- main / views ------------------------------------------------ */
 main {
   padding-bottom: calc(var(--nav-h) + var(--safe-b) + 82px);
