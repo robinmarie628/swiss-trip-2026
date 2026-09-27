@@ -902,7 +902,7 @@
         const mk = L.marker([h.lat, h.lng], { icon: makeCityPin(r.color, label) })
           .addTo(overlayGroup)
           .bindPopup(popupHtml(h.name, h.address, h.lat, h.lng, h.name));
-        mapMarkers.push({ lat: h.lat, lng: h.lng, marker: mk });
+        indexMarker(mk, h.lat, h.lng, h.name);
         allPts.push([h.lat, h.lng]);
       });
     } else {
@@ -916,7 +916,7 @@
           const mk = L.marker([h.lat, h.lng], { icon: makeHotelPin(r.color) })
             .addTo(overlayGroup)
             .bindPopup(popupHtml(h.name, h.address, h.lat, h.lng, h.name));
-          mapMarkers.push({ lat: h.lat, lng: h.lng, marker: mk });
+          indexMarker(mk, h.lat, h.lng, h.name);
           allPts.push([h.lat, h.lng]);
         }
 
@@ -927,7 +927,7 @@
             .addTo(overlayGroup)
             .bindPopup(popupHtml(p.name, deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''),
               p.lat, p.lng, p.name));
-          mapMarkers.push({ lat: p.lat, lng: p.lng, marker: mk });
+          indexMarker(mk, p.lat, p.lng, p.name);
           allPts.push([p.lat, p.lng]);
         });
 
@@ -959,7 +959,7 @@
       const mk = L.marker([s.lat, s.lng], { icon: makePhotoPin(), zIndexOffset: 400 })
         .addTo(overlayGroup)
         .bindPopup(photoPopupHtml(s));
-      mapMarkers.push({ lat: s.lat, lng: s.lng, marker: mk });
+      indexMarker(mk, s.lat, s.lng, s.name);
       allPts.push([s.lat, s.lng]);
     });
 
@@ -997,6 +997,148 @@
     hit._pulseTimer = setTimeout(function () { el.classList.remove('pin-pulse'); }, 3400);
   }
 
+  /* ---- long-press A, then pick B → plan A→B in the SBB app -------------- */
+
+  let linkFrom = null;         // the armed point
+  let linkTimer = null;        // long-press timer
+  let linkStart = null;        // pointer origin, to tell a hold from a drag
+  let linkSwallowClick = false;
+
+  /** the linkable point behind an element, or null */
+  function linkableOf(el) {
+    const t = el && el.closest ? el.closest('[data-link]') : null;
+    if (!t) return null;
+    const ll = String(t.dataset.link || '').split(',').map(Number);
+    if (isNaN(ll[0]) || isNaN(ll[1])) return null;
+    return { lat: ll[0], lng: ll[1], name: t.dataset.linkName || '', el: t };
+  }
+
+  /** register a marker in the render index and make it a link endpoint */
+  function indexMarker(mk, lat, lng, name) {
+    const el = mk.getElement && mk.getElement();
+    if (el) {
+      el.dataset.link = lat + ',' + lng;
+      el.dataset.linkName = name || '';
+    }
+    mapMarkers.push({ lat: lat, lng: lng, marker: mk });
+  }
+
+  function armLink(a) {
+    linkFrom = a;
+    document.body.classList.add('linking');
+    a.el.classList.add('link-armed');
+    toast('已选「' + a.name + '」—— 再点另一个地点，或按住划过去，规划 SBB 路线');
+  }
+
+  function clearLink() {
+    if (linkFrom && linkFrom.el) linkFrom.el.classList.remove('link-armed');
+    linkFrom = null;
+    document.body.classList.remove('linking');
+    Array.prototype.forEach.call(document.querySelectorAll('.link-over'), function (el) {
+      el.classList.remove('link-over');
+    });
+  }
+
+  /** the engine's cleanest option: fewest changes, then shortest ride */
+  function bestConnection(list) {
+    return list.slice().sort(function (a, b) {
+      if (a.transfers !== b.transfers) return a.transfers - b.transfers;
+      return (a.durationMin || 9999) - (b.durationMin || 9999);
+    })[0];
+  }
+
+  /**
+   * A → B. Both are the traveller's own points (a hotel, a sight, a photo spot),
+   * so let the timetable engine resolve them to real stops and hand those to
+   * SBB — the app cannot route from a bare coordinate or a hotel name.
+   */
+  function planLinkRoute(a, b) {
+    toast('正在规划 ' + a.name + ' → ' + b.name + ' …');
+    SERVICES.connections({
+      from: { lat: a.lat, lng: a.lng },
+      to: { lat: b.lat, lng: b.lng },
+      limit: 4,
+    }).then(function (list) {
+      const best = bestConnection(list);
+      const rides = best.sections.filter(function (s) { return s.kind === 'ride'; });
+      if (!rides.length) { toast('这两点之间没有查到班次，可能步行即可'); return; }
+      const board = rides[0].from;
+      const alight = rides[rides.length - 1].to;
+      openExternal(sbbUrl({ name: board }, { name: alight }));
+      toast('已在 SBB 搜索：' + board + ' → ' + alight);
+    }).catch(function (e) {
+      toast((e && e.message) || '规划失败，请重试');
+    });
+  }
+
+  /** a tap while armed completes the link; returns true if it was consumed */
+  function linkTap(target) {
+    if (!linkFrom) return false;
+    const b = linkableOf(target);
+    if (!b) { clearLink(); return false; }
+    if (b.lat === linkFrom.lat && b.lng === linkFrom.lng) { clearLink(); return true; }
+    const a = linkFrom;
+    clearLink();
+    linkSwallowClick = true;
+    planLinkRoute(a, b);
+    return true;
+  }
+
+  function bindLinkGesture() {
+    document.addEventListener('pointerdown', function (e) {
+      if (linkFrom) return;                       // already armed — the tap path handles it
+      const a = linkableOf(e.target);
+      if (!a) return;
+      linkStart = { x: e.clientX, y: e.clientY };
+      clearTimeout(linkTimer);
+      linkTimer = setTimeout(function () { armLink(a); }, 420);
+    }, true);
+
+    document.addEventListener('pointermove', function (e) {
+      if (!linkStart) return;
+      if (!linkFrom) {
+        // still holding for the long press: real movement means scroll or pan
+        if (Math.abs(e.clientX - linkStart.x) > 12 || Math.abs(e.clientY - linkStart.y) > 12) {
+          clearTimeout(linkTimer);
+          linkStart = null;
+        }
+        return;
+      }
+      // armed — mark whatever point the finger is over
+      const b = linkableOf(document.elementFromPoint(e.clientX, e.clientY));
+      Array.prototype.forEach.call(document.querySelectorAll('.link-over'), function (el) {
+        if (!b || el !== b.el) el.classList.remove('link-over');
+      });
+      if (b && b.el !== linkFrom.el) b.el.classList.add('link-over');
+    }, true);
+
+    document.addEventListener('pointerup', function (e) {
+      clearTimeout(linkTimer);
+      const armed = !!linkFrom;
+      const moved = !!linkStart;
+      linkStart = null;
+      if (!armed) return;
+      // released over another point → complete the link right away
+      const b = linkableOf(document.elementFromPoint(e.clientX, e.clientY));
+      if (b && (b.lat !== linkFrom.lat || b.lng !== linkFrom.lng)) {
+        const a = linkFrom;
+        clearLink();
+        linkSwallowClick = true;
+        planLinkRoute(a, b);
+        e.preventDefault();
+        return;
+      }
+      // released in place — stay armed and wait for a tap on B
+      if (moved) e.preventDefault();
+    }, true);
+
+    document.addEventListener('pointercancel', function () {
+      clearTimeout(linkTimer);
+      linkStart = null;
+      if (linkFrom) clearLink();
+    }, true);
+  }
+
   function renderMapPlaces(days) {
     let n = 0;
     const html = days.map(function (di) {
@@ -1007,14 +1149,16 @@
         'text-transform:uppercase;color:' + r.color + '">' + esc(d.dow) + ' · ' + esc(d.title) + '</div>';
       if (h) {
         n++;
-        out += '<button class="place" data-maplot="' + h.lat + ',' + h.lng + '">' +
+        out += '<button class="place" data-maplot="' + h.lat + ',' + h.lng + '"' +
+          ' data-link="' + h.lat + ',' + h.lng + '" data-link-name="' + esc(h.name) + '">' +
           '<span class="place-ic" style="--tint:' + r.color + ';--tint-soft:' + r.soft + '">' + icon('bed') + '</span>' +
           '<span class="place-tx"><b>' + esc(h.name) + '</b><span>酒店 · ' + esc(h.address) + '</span></span>' +
           '<span class="place-go">' + icon('pin') + '</span></button>';
       }
       d.places.forEach(function (p) {
         n++;
-        out += '<button class="place" data-maplot="' + p.lat + ',' + p.lng + '">' +
+        out += '<button class="place" data-maplot="' + p.lat + ',' + p.lng + '"' +
+          ' data-link="' + p.lat + ',' + p.lng + '" data-link-name="' + esc(p.name) + '">' +
           '<span class="place-ic" style="--tint:' + r.color + ';--tint-soft:' + r.soft + '">' +
             icon(p.kind === 'transit' ? 'train' : 'pin') + '</span>' +
           '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' + esc(deEn(p.nameDe, p.nameEn)) +
@@ -1033,7 +1177,8 @@
         spots.map(function (s) {
           const dn = s.day ? (DAYS.filter(function (d) { return d.id === s.day; })[0] || {}) : null;
           return '<div class="place photo-row">' +
-            '<button class="place-main" data-photo-open="' + esc(s.id) + '">' +
+            '<button class="place-main" data-photo-open="' + esc(s.id) + '"' +
+              ' data-link="' + s.lat + ',' + s.lng + '" data-link-name="' + esc(s.name) + '">' +
               '<span class="place-ic" style="--tint:#d03a2f;--tint-soft:#fdeceb">' + icon('camera') + '</span>' +
               '<span class="place-tx"><b>' + esc(s.name) + '</b><span>' +
                 esc([deEn(s.nameDe, s.nameEn), s.best || (dn ? dn.dow : '')].filter(Boolean).join(' · ')) +
@@ -2936,9 +3081,15 @@
     $('#sheetBg').addEventListener('click', closeSheet);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && sheetOpen) closeSheet(); });
 
+    bindLinkGesture();
+
     // delegated clicks
     document.addEventListener('click', function (e) {
       const t = e.target;
+
+      // an armed A→B link swallows the tap that completes it
+      if (linkSwallowClick) { linkSwallowClick = false; return; }
+      if (linkFrom && linkTap(t)) return;
 
       // While a list is being reordered, a tap inside it must not fire the row's
       // normal action. The click that the browser fires when the finger lifts can
