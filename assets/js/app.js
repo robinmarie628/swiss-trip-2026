@@ -1541,6 +1541,35 @@
         '</div></div>' +
       '</div>' +
 
+      /* github sync */
+      (function () {
+        const gc = ghConfig();
+        const ready = !!(gc.repo && gc.token);
+        const last = store.get(GH_LAST, 0);
+        return '<div class="sec">' +
+          '<div class="sec-head"><h2>同步至 GitHub</h2>' +
+            '<span class="more">' + (ready ? '已配置' : '未配置') + '</span></div>' +
+          '<div class="card"><div class="card-bd tight">' +
+            '<div class="kv"><span class="k">仓库</span><span class="v">' +
+              (ready ? esc(gc.repo) + ' · ' + esc(gc.branch || 'main') : '未配置') + '</span>' +
+              '<button class="btn sm ghost" data-gh-setup="1">设置</button></div>' +
+            (ready ? '<div class="kv"><span class="k">文件</span><span class="v">' + esc(gc.path) + '</span></div>' : '') +
+            (last ? '<div class="kv"><span class="k">上次同步</span><span class="v">' +
+              esc(new Date(last).toLocaleString('zh-CN')) + '</span></div>' : '') +
+          '</div>' +
+          (ready ? '<div class="card-bd"><div class="btn-row">' +
+            '<button class="btn sm primary" data-gh-push="1">上传到 GitHub</button>' +
+            '<button class="btn sm ghost" data-gh-pull="1">从 GitHub 拉取</button>' +
+          '</div></div>' : '') +
+          '<div style="margin-top:10px;font-size:11.5px;line-height:1.65;color:var(--muted)">' +
+            '只同步你自己的修改（地点、交通、安排、拍照点、记账）。' +
+            '票据图片存在本机、<b>绝不</b>上传；证件与联系人等个人信息不在同步范围内。' +
+            'Token 只保存在这台手机里。' +
+          '</div>' +
+          '</div>' +
+        '</div>';
+      })() +
+
       /* my edits */
       '<div class="sec">' +
         '<div class="sec-head"><h2>我的修改</h2><span class="more">只在本机</span></div>' +
@@ -3024,6 +3053,181 @@
     else { renderHero(); renderChips(); if (state.view === 'today') renderToday(); }
   }
 
+  /* ======================== GitHub sync =============================== */
+
+  const GH_KEY = 'swiss.gh.v1';
+  const GH_LAST = 'swiss.gh.last';
+
+  function ghConfig() {
+    try { return JSON.parse(localStorage.getItem(GH_KEY) || 'null') || {}; }
+    catch (e) { return {}; }
+  }
+
+  function setGhConfig(c) {
+    try {
+      if (c) localStorage.setItem(GH_KEY, JSON.stringify(c));
+      else localStorage.removeItem(GH_KEY);
+    } catch (e) {}
+  }
+
+  function ghReady() {
+    const c = ghConfig();
+    return !!(c.repo && c.token);
+  }
+
+  function ghContentsUrl(c) {
+    const path = String(c.path || 'sync/swiss-trip.json').split('/').map(encodeURIComponent).join('/');
+    return 'https://api.github.com/repos/' + c.repo + '/contents/' + path;
+  }
+
+  function ghHeaders() {
+    return {
+      Authorization: 'Bearer ' + ghConfig().token,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+  }
+
+  async function ghError(res) {
+    let msg = String(res.status);
+    try {
+      const j = await res.json();
+      if (j && j.message) msg = res.status + ' ' + j.message;
+    } catch (e) {}
+    if (res.status === 401) msg += '（Token 无效或已过期）';
+    else if (res.status === 403) msg += '（权限不足，或触发了限流）';
+    else if (res.status === 404) msg += '（仓库 / 分支 / 路径不存在，或 Token 无权访问）';
+    return msg;
+  }
+
+  /** the remote file, or null when it does not exist yet */
+  async function ghRead() {
+    const c = ghConfig();
+    const res = await fetch(ghContentsUrl(c) + '?ref=' + encodeURIComponent(c.branch || 'main'),
+      { headers: ghHeaders() });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(await ghError(res));
+    return res.json();
+  }
+
+  async function ghWrite(text, message) {
+    const c = ghConfig();
+    const existing = await ghRead();
+    const body = {
+      message: message,
+      content: b64encode(text),
+      branch: c.branch || 'main',
+    };
+    if (existing && existing.sha) body.sha = existing.sha;
+    const res = await fetch(ghContentsUrl(c), {
+      method: 'PUT',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, ghHeaders()),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await ghError(res));
+    return res.json();
+  }
+
+  function b64encode(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+
+  function b64decode(b64) {
+    const bin = atob(String(b64).replace(/\s/g, ''));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  /**
+   * What we push. Deliberately narrow:
+   *   - NO images: ticket photos live in IndexedDB and are never read here
+   *   - NO personal data: the traveller's own edits carry none, and the
+   *     identity fields in data.js (card holder, contacts, passport notes) are
+   *     code, not user data, so they can never end up in this payload
+   *   - geoCache is dropped: a derived reverse-geocode cache, bulky and
+   *     regenerated on demand
+   */
+  function ghPayload() {
+    const user = Object.assign({}, STORE.raw());
+    delete user.geoCache;
+    return {
+      app: 'swiss-trip-workbench',
+      kind: 'sync',
+      version: 1,
+      syncedAt: new Date().toISOString(),
+      user: user,
+      expenses: expenses(),
+    };
+  }
+
+  async function ghSyncPush() {
+    if (!ghReady()) throw new Error('请先设置仓库与 Token');
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const info = await ghWrite(JSON.stringify(ghPayload(), null, 2), 'sync: swiss-trip 数据 · ' + stamp);
+    store.set(GH_LAST, Date.now());
+    return { path: (info.content && info.content.path) || ghConfig().path };
+  }
+
+  async function ghSyncPull() {
+    if (!ghReady()) throw new Error('请先设置仓库与 Token');
+    const file = await ghRead();
+    if (!file) throw new Error('远端还没有这个文件，先「上传到 GitHub」一次');
+    const payload = JSON.parse(b64decode(file.content));
+    if (!payload || payload.kind !== 'sync' || !payload.user) throw new Error('文件不是本应用的同步数据');
+    const cur = STORE.raw();
+    ['places', 'legs', 'legEdits', 'blocks', 'hidden', 'photoSpots', 'hiddenPhotos',
+      'order', 'sortMode', 'presets', 'budget', 'rates', 'photoVisible'].forEach(function (k) {
+      if (payload.user[k] !== undefined) cur[k] = payload.user[k];
+    });
+    STORE.save();
+    if (Array.isArray(payload.expenses)) saveExpenses(payload.expenses);
+    store.set(GH_LAST, Date.now());
+    return { syncedAt: payload.syncedAt };
+  }
+
+  function openGhSetup() {
+    const c = ghConfig();
+    openSheet('同步至 GitHub', '仓库与 Token 只保存在本机',
+      '<div class="field"><label>仓库（owner/name）</label>' +
+        '<input id="ghRepo" type="text" autocomplete="off" placeholder="例如 robinmarie628/swiss-trip-2026" value="' + esc(c.repo || '') + '"></div>' +
+      '<div class="field"><label>分支</label>' +
+        '<input id="ghBranch" type="text" autocomplete="off" placeholder="main" value="' + esc(c.branch || 'main') + '"></div>' +
+      '<div class="field"><label>文件路径</label>' +
+        '<input id="ghPath" type="text" autocomplete="off" placeholder="sync/swiss-trip.json" value="' + esc(c.path || 'sync/swiss-trip.json') + '"></div>' +
+      '<div class="field"><label>Personal Access Token</label>' +
+        '<input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_… 或 ghp_…" value="' + esc(c.token || '') + '"></div>' +
+      '<div class="hint">建议用 <b>Fine-grained token</b>，只授权这个仓库的 <b>Contents: Read and write</b>。' +
+        'Token 只存在这台手机的浏览器里，不会上传。<br>' +
+        '仓库建议设为<b>私有</b> —— 公开仓库会让行程与账目对所有人可见。</div>' +
+      '<button class="btn block primary" id="ghSave" style="margin-top:14px;height:46px">保存</button>' +
+      '<button class="btn block ghost" id="ghClear" style="margin-top:8px">清除配置</button>',
+      function () {
+        $('#ghSave').addEventListener('click', function () {
+          const repo = $('#ghRepo').value.trim();
+          const token = $('#ghToken').value.trim();
+          setGhConfig({
+            repo: repo,
+            branch: $('#ghBranch').value.trim() || 'main',
+            path: $('#ghPath').value.trim() || 'sync/swiss-trip.json',
+            token: token,
+          });
+          closeSheet();
+          renderMore();
+          toast(repo && token ? '已保存 GitHub 配置' : '已保存（仓库或 Token 还空着）');
+        });
+        $('#ghClear').addEventListener('click', function () {
+          setGhConfig(null);
+          closeSheet();
+          renderMore();
+          toast('已清除 GitHub 配置');
+        });
+      }, 'editor');
+  }
+
   /* ======================== global events ============================= */
   function bind() {
     // nav
@@ -3479,6 +3683,43 @@
               });
             });
           });
+        return;
+      }
+
+      /* ---- github sync ---------------------------------------------- */
+      const ghSetupBtn = t.closest('[data-gh-setup]');
+      if (ghSetupBtn) { openGhSetup(); return; }
+
+      const ghPushBtn = t.closest('[data-gh-push]');
+      if (ghPushBtn) {
+        ghPushBtn.disabled = true;
+        ghPushBtn.textContent = '上传中…';
+        const back = function () { ghPushBtn.disabled = false; ghPushBtn.textContent = '上传到 GitHub'; };
+        ghSyncPush().then(function (r) {
+          toast('已同步到 GitHub：' + r.path);
+          back();
+          renderMore();
+        }, function (e) {
+          toast('同步失败：' + ((e && e.message) || e));
+          back();
+        });
+        return;
+      }
+
+      const ghPullBtn = t.closest('[data-gh-pull]');
+      if (ghPullBtn) {
+        ghPullBtn.disabled = true;
+        ghPullBtn.textContent = '拉取中…';
+        const back = function () { ghPullBtn.disabled = false; ghPullBtn.textContent = '从 GitHub 拉取'; };
+        ghSyncPull().then(function (r) {
+          toast('已从 GitHub 恢复' + (r.syncedAt ? '（' + r.syncedAt.slice(0, 16).replace('T', ' ') + '）' : ''));
+          back();
+          refreshAfterEdit();
+          renderMore();
+        }, function (e) {
+          toast('拉取失败：' + ((e && e.message) || e));
+          back();
+        });
         return;
       }
 
