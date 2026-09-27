@@ -159,6 +159,23 @@
     };
   }
 
+  /**
+   * Build a Google Maps transit-directions URL from two resolveRef() results.
+   * Prefers lat,lng when we have them; falls back to the place name (Google
+   * will geocode). `travelmode=transit` covers bus, rail, and the SBB network.
+   */
+  function gmapsTransitUrl(fromRef, toRef) {
+    const enc = function (r) {
+      if (!r) return '';
+      if (r.lat != null && r.lng != null) return r.lat + ',' + r.lng;
+      return r.name || '';
+    };
+    const o = encodeURIComponent(enc(fromRef));
+    const d = encodeURIComponent(enc(toRef));
+    return 'https://www.google.com/maps/dir/?api=1' +
+      '&origin=' + o + '&destination=' + d + '&travelmode=transit';
+  }
+
   /* ======================== HERO ====================================== */
   function renderHero() {
     const day = DAYS[state.sel];
@@ -1670,7 +1687,8 @@
     const overlapping = HOTELS.filter(function (h) {
       return h.checkIn && h.checkOut && h.checkIn <= mmdd && mmdd <= h.checkOut;
     });
-    primary.concat(overlapping).forEach(function (h) { push(h.city || h.name, 'hotel', h.name); });
+    // use the *booked* hotel name (not the city) so the chip matches the booking
+    primary.concat(overlapping).forEach(function (h) { push(h.name, 'hotel', h.city || ''); });
     day.places.forEach(function (p) { push(p.name, 'place', p.nameEn || ''); });
     return out;
   }
@@ -1681,9 +1699,43 @@
     return '<div class="field"><label>' + esc(label) + '</label>' +
       '<div class="chips-row">' + refs.map(function (r) {
         return '<button class="chip' + (r.kind === 'hotel' ? ' chip-hotel' : '') + '" ' +
-          attr + '="' + esc(r.name) + '">' +
+          attr + '="' + esc(r.name) + '" title="' + esc(r.name + (r.sub ? ' · ' + r.sub : '')) + '">' +
           (r.kind === 'hotel' ? icon('bed') : '') + esc(r.name) + '</button>';
       }).join('') + '</div></div>';
+  }
+
+  /**
+   * Wire chip taps with a deterministic 起点→终点 sequence.
+   *
+   * Tap 1 → fills 起点 (always overwrites any pre-fill).
+   * Tap 2 → fills 终点.
+   * Tap 3+ → ignored (so the same chip can't silently fill both fields,
+   *                  which is exactly what made 起点=终点=格林德瓦村 in the bug).
+   *
+   * `hintEl` is updated live so the user always sees what the next tap will do.
+   * Call once per sheet-open; the sequence resets every time.
+   */
+  function wireSeqChips(root, fromSel, toSel, attr, hintEl) {
+    const f = root.querySelector(fromSel);
+    const t = root.querySelector(toSel);
+    const hint = hintEl || null;
+    let step = 0;
+    const update = function () {
+      if (!hint) return;
+      if (step === 0) hint.textContent = '下一步点击将填入：起点';
+      else if (step === 1) hint.textContent = '下一步点击将填入：终点';
+      else hint.textContent = '起点与终点已填好 — 点输入框可手动改，或直接点查询班次';
+    };
+    update();
+    root.addEventListener('click', function (ev) {
+      const chip = ev.target.closest('[' + attr + ']');
+      if (!chip) return;
+      const v = chip.getAttribute(attr);
+      if (step === 0) { if (f) f.value = v; step = 1; }
+      else if (step === 1) { if (t) t.value = v; step = 2; }
+      else { return; }
+      update();
+    });
   }
 
   function transportFormHtml(day) {
@@ -1694,6 +1746,7 @@
       '<div class="field"><label>终点</label>' +
         '<input id="tpTo" type="text" placeholder="车站名或地点" autocomplete="off"></div>' +
       quickChips(refs, 'data-tp-set', '当天地点与酒店 · 点一下按顺序填入起点、终点') +
+      '<div class="chip-hint" id="tpChipHint">下一步点击将填入：起点</div>' +
       '<div class="tp-when">' +
         '<div class="field" style="flex:1"><label>日期</label>' +
           '<input id="tpDate" type="date" value="' + day.date + '"></div>' +
@@ -1701,7 +1754,11 @@
           '<input id="tpTime" type="time" value="08:00"></div>' +
       '</div>' +
       '<button class="btn block primary" id="tpGo" style="height:46px">' +
-        icon('train') + '查询可行班次</button>' +
+        icon('train') + '查询可行班次（SBB 实时）</button>' +
+      '<button class="btn block ghost" id="tpMap" style="height:46px;margin-top:8px">' +
+        icon('map') + '用 Google 地图查公交路线</button>' +
+      '<div class="hint" style="margin-top:8px">' +
+        'Google 地图会同时给出公交、步行与驾车方案，适合 SBB 没有覆盖到的最后一公里。</div>' +
       '<div id="tpResults" style="margin-top:14px"></div>' +
       '<div class="sheet-sep"></div>' +
       '<button class="btn block ghost" id="tpManual">手动添加一段交通</button>';
@@ -1759,17 +1816,10 @@
         if (fromRef) setFrom(fromRef.name || '');
         if (toRef) setTo(toRef.name || '');
 
-        $('.sheet-inner').addEventListener('click', function (ev) {
-          const chip = ev.target.closest('[data-tp-set]');
-          if (chip) {
-            // fill the first empty end, then the other one; re-tap replaces 终点
-            const f = $('#tpFrom'), t = $('#tpTo');
-            if (!f.value.trim()) setFrom(chip.dataset.tpSet);
-            else if (!t.value.trim()) setTo(chip.dataset.tpSet);
-            else setTo(chip.dataset.tpSet);
-            return;
-          }
+        const inner = $('.sheet-inner');
+        wireSeqChips(inner, '#tpFrom', '#tpTo', 'data-tp-set', $('#tpChipHint'));
 
+        inner.addEventListener('click', function (ev) {
           const det = ev.target.closest('[data-conn-detail]');
           if (det) {
             const i = Number(det.dataset.connDetail);
@@ -1802,6 +1852,16 @@
           }
 
           if (ev.target.closest('#tpManual')) { openManualLeg(dayIndex); return; }
+          if (ev.target.closest('#tpMap')) {
+            const fv = $('#tpFrom').value.trim();
+            const tv = $('#tpTo').value.trim();
+            if (!fv || !tv) { toast('请填写起点和终点'); return; }
+            const fr = resolveRef(fv);
+            const tr = resolveRef(tv);
+            const u = gmapsTransitUrl(fr, tr);
+            window.open(u, '_blank', 'noopener');
+            return;
+          }
         });
 
         $('#tpGo').addEventListener('click', function () {
@@ -1845,6 +1905,7 @@
       '<div class="field"><label>终点</label>' +
         '<input id="mlTo" type="text" placeholder="例如 缆车站" value="' + esc(l.to || '') + '"></div>' +
       quickChips(dayQuickRefs(day), 'data-leg-set', '当天地点与酒店 · 点一下按顺序填入') +
+      '<div class="chip-hint" id="mlChipHint">下一步点击将填入：起点</div>' +
       '<div class="field"><label>方式</label>' +
         '<input id="mlMode" type="text" placeholder="例如 步行 / 缆车 / 出租车" value="' + esc(l.mode || '') + '"></div>' +
       '<div class="field"><label>耗时</label>' +
@@ -1860,15 +1921,12 @@
         '<input id="mlNote" type="text" placeholder="例如 需提前买票" value="' + esc(l.note || '') + '"></div>';
   }
 
-  /** chips in the leg form fill 起点 then 终点 */
+  /**
+   * @deprecated — use wireSeqChips() so manual-add and edit-leg chips share
+   * the same 起点→终点 sequence + live hint as the transport picker.
+   */
   function wireLegChips(root) {
-    root.addEventListener('click', function (ev) {
-      const chip = ev.target.closest('[data-leg-set]');
-      if (!chip) return;
-      const f = $('#mlFrom'), t = $('#mlTo');
-      if (!f.value.trim()) f.value = chip.dataset.legSet;
-      else t.value = chip.dataset.legSet;
-    });
+    wireSeqChips(root, '#mlFrom', '#mlTo', 'data-leg-set', $('#mlChipHint'));
   }
 
   function legFormValues() {
