@@ -2,7 +2,7 @@
   "app": "swiss-trip-workbench",
   "kind": "sync",
   "version": 1,
-  "syncedAt": "2026-09-27T10:06:00.667Z",
+  "syncedAt": "2026-09-27T10:08:33.661Z",
   "user": {
     "version": 1,
     "places": {
@@ -259,5 +259,30 @@
       "at": 1790479732723
     }
   },
-  "expenses": []
+  "expenses": [
+    {
+      "id": "e1790503694756sjrr",
+      "amount": 25,
+      "cat": "transport",
+      "note": "SBB 火车票",
+      "date": "2026-09-27",
+      "ts": 1790503694757
+    },
+    {
+      "id": "e17905036938731ug8",
+      "amount": 25,
+      "cat": "transport",
+      "note": "SBB 火车票",
+      "date": "2026-09-27",
+      "ts": 1790503693874
+    },
+    {
+      "id": "e17905036930578p53",
+      "amount": 25,
+      "cat": "transport",
+      "note": "SBB 火车票",
+      "date": "2026-09-27",
+      "ts": 1790503693058
+    }
+  ]
 }
