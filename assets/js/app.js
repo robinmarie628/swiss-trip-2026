@@ -176,6 +176,27 @@
       '&origin=' + o + '&destination=' + d + '&travelmode=transit';
   }
 
+  /**
+   * Build an SBB Mobile deep link. `app.sbbmobile.ch` is SBB's universal-link
+   * handler: on a phone it opens the SBB Mobile app with the chosen stations
+   * pre-filled; if the app isn't installed it falls back to the SBB web
+   * timetable (which shows App Store / Play Store links). We pass the
+   * German/English place name — never the Chinese label, which SBB's geocoder
+   * can't resolve. Falls back to lat,lng only when no textual name exists.
+   */
+  function sbbUrl(fromRef, toRef) {
+    const enc = function (r) {
+      if (!r) return '';
+      const label = r.nameDe || r.nameEn || r.name || '';
+      if (label) return label;
+      if (r.lat != null && r.lng != null) return r.lat + ',' + r.lng;
+      return '';
+    };
+    const o = encodeURIComponent(enc(fromRef));
+    const d = encodeURIComponent(enc(toRef));
+    return 'https://app.sbbmobile.ch/timetable?from=' + o + '&to=' + d;
+  }
+
   /* ======================== HERO ====================================== */
   function renderHero() {
     const day = DAYS[state.sel];
@@ -1658,13 +1679,18 @@
     const hit = day.places.filter(function (p) {
       return p.name === t || p.nameEn === t;
     })[0];
-    if (hit) return { name: hit.name, lat: hit.lat, lng: hit.lng, stationId: hit.stationId || null };
+    if (hit) return {
+      name: hit.name, lat: hit.lat, lng: hit.lng, stationId: hit.stationId || null,
+      // SBB geocodes German/English, not Chinese — surface both so the deep
+      // link opens the right station even when the displayed label is Chinese
+      nameEn: hit.nameEn || null, nameDe: hit.nameDe || null,
+    };
     const h = hotelById(day.hotelId);
-    if (h && (h.name === t || h.city === t)) return { name: t, lat: h.lat, lng: h.lng };
+    if (h && (h.name === t || h.city === t)) return { name: t, lat: h.lat, lng: h.lng, nameEn: h.name || null, nameDe: null };
     // a hotel that is merely touched by this day (checkout / check-in)
     const other = HOTELS.filter(function (x) { return x.name === t || x.city === t; })[0];
-    if (other) return { name: t, lat: other.lat, lng: other.lng };
-    return { name: t };
+    if (other) return { name: t, lat: other.lat, lng: other.lng, nameEn: other.name || null, nameDe: null };
+    return { name: t, nameEn: null, nameDe: null };
   }
 
   /**
@@ -1757,8 +1783,11 @@
         icon('train') + '查询可行班次（SBB 实时）</button>' +
       '<button class="btn block ghost" id="tpMap" style="height:46px;margin-top:8px">' +
         icon('map') + '用 Google 地图查公交路线</button>' +
+      '<button class="btn block ghost" id="tpSbb" style="height:46px;margin-top:8px">' +
+        icon('ticket') + '用 SBB App 查票购票</button>' +
       '<div class="hint" style="margin-top:8px">' +
-        'Google 地图会同时给出公交、步行与驾车方案，适合 SBB 没有覆盖到的最后一公里。</div>' +
+        'Google 地图会同时给出公交、步行与驾车方案，适合 SBB 没有覆盖到的最后一公里。<br>' +
+        '点「SBB App」会直接在手机上打开 SBB Mobile，已按所选起点 / 终点填好，可查班次并买票；没装 App 会自动跳到 SBB 网页。</div>' +
       '<div id="tpResults" style="margin-top:14px"></div>' +
       '<div class="sheet-sep"></div>' +
       '<button class="btn block ghost" id="tpManual">手动添加一段交通</button>';
@@ -1859,6 +1888,17 @@
             const fr = resolveRef(fv);
             const tr = resolveRef(tv);
             const u = gmapsTransitUrl(fr, tr);
+            window.open(u, '_blank', 'noopener');
+            return;
+          }
+
+          if (ev.target.closest('#tpSbb')) {
+            const fv = $('#tpFrom').value.trim();
+            const tv = $('#tpTo').value.trim();
+            if (!fv || !tv) { toast('请填写起点和终点'); return; }
+            const fr = resolveRef(fv);
+            const tr = resolveRef(tv);
+            const u = sbbUrl(fr, tr);
             window.open(u, '_blank', 'noopener');
             return;
           }
