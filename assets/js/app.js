@@ -241,13 +241,12 @@
     const o = encodeURIComponent((fromSt && fromSt.name) || '');
     const d = encodeURIComponent((toSt && toSt.name) || '');
     let u = 'https://app.sbbmobile.ch/timetable?from=' + o + '&to=' + d;
-    // SBB pre-fills the departure date/time from these. Verified against SBB's
-    // own universal-link page, which forwards them to the app as
-    //   sbbmobile://timetable?date=2026-10-04&from=…&to=…&time=09:00
-    // (date = YYYY-MM-DD, time = HH:MM). Omit them and the app silently
-    // defaults to "depart now", which is not what a planned itinerary wants.
-    if (date) u += '&date=' + encodeURIComponent(date);
-    if (time) u += '&time=' + encodeURIComponent(time);
+    // SBB wants these values wrapped in LITERAL double quotes — its own
+    // deep-link generator emits `&date="2026-10-04"&time="09:30"`.
+    // Unquoted values are not parsed: the app falls back to the Unix epoch,
+    // which shows up in the UI as "Jan 1, 01:00" (epoch 0 in CET).
+    if (date) u += '&date=' + encodeURIComponent('"' + date + '"');
+    if (time) u += '&time=' + encodeURIComponent('"' + time + '"');
     return u;
   }
 
