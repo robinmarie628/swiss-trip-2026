@@ -2,7 +2,7 @@
   "app": "swiss-trip-workbench",
   "kind": "sync",
   "version": 1,
-  "syncedAt": "2026-09-27T10:15:10.172Z",
+  "syncedAt": "2026-09-27T11:57:40.981Z",
   "user": {
     "version": 1,
     "places": {
@@ -15,15 +15,6 @@
           "lng": 8.5374914,
           "kind": "sight",
           "note": "130 · Binzmühlestrasse",
-          "stationId": null
-        },
-        {
-          "name": "苏黎世大教堂",
-          "nameEn": "",
-          "lat": 47.3701214,
-          "lng": 8.5439115,
-          "kind": "sight",
-          "note": "Grossmünsterplatz · Rathaus",
           "stationId": null
         },
         {
@@ -42,6 +33,26 @@
           "lng": 8.5407019,
           "kind": "sight",
           "note": "2 · Museumstrasse",
+          "stationId": null
+        },
+        {
+          "name": "Zürich Hauptbahnhof",
+          "nameEn": "",
+          "lat": 47.3781008,
+          "lng": 8.5393635,
+          "kind": "sight",
+          "note": "Passage Löwenstrasse · City",
+          "stationId": null
+        }
+      ],
+      "d6": [
+        {
+          "name": "ETH Zürich",
+          "nameEn": "",
+          "lat": 47.413218,
+          "lng": 8.5374914,
+          "kind": "sight",
+          "note": "130 · Binzmühlestrasse",
           "stationId": null
         }
       ]
@@ -202,6 +213,13 @@
       "d5": [
         "苏黎世老城",
         "Zürich HB→酒店|S-Bahn 至 Zürich Oerlikon + 步行 / 电车"
+      ],
+      "d6": [
+        "圣母大教堂",
+        "苏黎世大教堂"
+      ],
+      "d7": [
+        "Bourg-de-Four 广场"
       ]
     },
     "photoSpots": [],
@@ -229,11 +247,11 @@
         "p": [
           "Landesmuseum",
           "林登霍夫",
-          "班霍夫大街",
-          "苏黎世大教堂",
           "Augustinergasse",
+          "班霍夫大街",
           "苏黎世湖滨",
           "利马特河",
+          "Zürich Hauptbahnhof",
           "ETH Zürich"
         ]
       }
@@ -247,6 +265,14 @@
       },
       "d5": {
         "p": "manual"
+      }
+    },
+    "placeTimes": {
+      "d5": {
+        "ETH Zürich": [
+          660,
+          960
+        ]
       }
     },
     "presets": null,
