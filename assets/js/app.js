@@ -236,18 +236,18 @@
    * pre-filled; if the app isn't installed it falls back to the SBB web
    * timetable (which shows App Store / Play Store links). Stations only — pass
    * the output of toStation(), never a hotel/POI name.
+   *
+   * Deliberately carries NO date/time. SBB's app only half-supports them: the
+   * universal link accepts a `date`/`time` pair, but any value it can't parse
+   * (including the quote-wrapped `date="2026-10-04"` form its own deep-link
+   * generator emits) makes it fall back to the Unix epoch — the traveller saw
+   * "Jan 1, 01:00". Omitting them makes the app open on the current time, which
+   * is the sane default; the day/time can be adjusted inside the app.
    */
-  function sbbUrl(fromSt, toSt, date, time) {
+  function sbbUrl(fromSt, toSt) {
     const o = encodeURIComponent((fromSt && fromSt.name) || '');
     const d = encodeURIComponent((toSt && toSt.name) || '');
-    let u = 'https://app.sbbmobile.ch/timetable?from=' + o + '&to=' + d;
-    // SBB wants these values wrapped in LITERAL double quotes — its own
-    // deep-link generator emits `&date="2026-10-04"&time="09:30"`.
-    // Unquoted values are not parsed: the app falls back to the Unix epoch,
-    // which shows up in the UI as "Jan 1, 01:00" (epoch 0 in CET).
-    if (date) u += '&date=' + encodeURIComponent('"' + date + '"');
-    if (time) u += '&time=' + encodeURIComponent('"' + time + '"');
-    return u;
+    return 'https://app.sbbmobile.ch/timetable?from=' + o + '&to=' + d;
   }
 
   /** the timetable engine's cleanest option: fewest changes, then shortest ride */
@@ -331,27 +331,18 @@
       toast('起点与终点是同一车站（' + r.stop + '），这段不需要乘车');
       return;
     }
-    // carry the sheet's departure date/time into the link, so SBB opens on the
-    // planned day instead of defaulting to "now"
-    const dateEl = $('#tpDate');
-    const timeEl = $('#tpTime');
-    const dateVal = dateEl ? dateEl.value : '';
-    const timeVal = timeEl ? timeEl.value : '';
-    const when = [dateVal, timeVal].filter(Boolean).join(' ');
-
     let u, msg, text;
     if (r.kind === 'route') {
-      u = sbbUrl({ name: r.board }, { name: r.alight }, dateVal, timeVal);
-      text = '最优路线 ' + r.line + '：' + r.board + ' 上车 → ' + r.alight + ' 下车' +
-        (when ? ' · ' + when : '') + '（约 ' + r.duration + '）';
-      msg = '已按最优路线 ' + r.line + '：' + r.board + ' → ' + r.alight + (when ? ' · ' + when : '');
+      u = sbbUrl({ name: r.board }, { name: r.alight });
+      text = '最优路线 ' + r.line + '：' + r.board + ' 上车 → ' + r.alight + ' 下车（约 ' + r.duration + '）';
+      msg = '已按最优路线 ' + r.line + '：' + r.board + ' → ' + r.alight;
     } else if (r.kind === 'nearest') {
-      u = sbbUrl({ name: r.from }, { name: r.to }, dateVal, timeVal);
-      text = '最近车站：' + r.from + ' → ' + r.to + (when ? ' · ' + when : '');
+      u = sbbUrl({ name: r.from }, { name: r.to });
+      text = '最近车站：' + r.from + ' → ' + r.to;
       msg = '已换成最近车站：' + r.from + ' → ' + r.to;
     } else {
-      u = sbbUrl({ name: r.from }, { name: r.to }, dateVal, timeVal);
-      text = 'SBB 路线：' + r.from + ' → ' + r.to + (when ? ' · ' + when : '');
+      u = sbbUrl({ name: r.from }, { name: r.to });
+      text = 'SBB 路线：' + r.from + ' → ' + r.to;
       msg = '已打开 SBB：' + r.from + ' → ' + r.to;
     }
     setInfo(text);
@@ -1985,7 +1976,7 @@
       '<div class="hint" id="tpSbbInfo" style="display:none;margin-top:8px"></div>' +
       '<div class="hint" style="margin-top:8px">' +
         'Google 地图会同时给出公交、步行与驾车方案，适合 SBB 没有覆盖到的最后一公里。<br>' +
-        'SBB 只认车站名：点「SBB App」会按上面选的日期 / 时间规划最优路线，自动取「就近的上车站 / 下车站」（例如酒店旁步行几分钟的 tram 站，而不是门口的慢速巴士站），再打开 SBB Mobile 查班次、买票；没装 App 会自动跳到 SBB 网页。</div>' +
+        'SBB 只认车站名：点「SBB App」会按上面选的日期 / 时间算出「就近的上车站 / 下车站」（例如酒店旁步行几分钟的 tram 站，而不是门口的慢速巴士站），再打开 SBB Mobile 买票。App 内默认按当前时间查询，日期与时间可在 App 里调整；没装 App 会自动跳到 SBB 网页。</div>' +
       '<div id="tpResults" style="margin-top:14px"></div>' +
       '<div class="sheet-sep"></div>' +
       '<button class="btn block ghost" id="tpManual">手动添加一段交通</button>';
