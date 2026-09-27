@@ -70,6 +70,21 @@
     return o;
   }
 
+  /**
+   * Combined "German · English" line for a named place/spot.
+   * Most Swiss place names are already German, so if the German form equals the
+   * English one we show it just once (no doubled text). Falls back to English when
+   * no German is recorded.
+   */
+  function deEn(de, en) {
+    de = de || '';
+    en = en || '';
+    if (!de) return en;
+    if (!en) return de;
+    if (de.toLowerCase() === en.toLowerCase()) return de;
+    return de + ' · ' + en;
+  }
+
   /** whole days from ISO date a to ISO date b */
   function dayDiff(a, b) {
     return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
@@ -342,7 +357,7 @@
         '<button class="place" data-place="' + idx + ':' + i + '" style="' + tintStyle(r) + '">' +
           '<span class="place-ic">' +
             icon(p.kind === 'transit' ? 'train' : (p.kind === 'area' ? 'map' : 'pin')) + '</span>' +
-          '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' + esc(p.nameEn) +
+          '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' + esc(deEn(p.nameDe, p.nameEn)) +
             (p.note ? ' · ' + esc(p.note) : '') + '</span></span>' +
           '<span class="place-go">' + icon('chev') + '</span>' +
         '</button>' +
@@ -649,7 +664,7 @@
   function photoPopupHtml(s) {
     const u = navUrl(s.lat, s.lng, s.name);
     return '<b>' + esc(s.name) + '</b>' +
-      (s.nameEn ? '<div class="pop-sub">' + esc(s.nameEn) + '</div>' : '') +
+      (s.nameDe || s.nameEn ? '<div class="pop-sub">' + esc(deEn(s.nameDe, s.nameEn)) + '</div>' : '') +
       (s.best ? '<div class="pop-note">最佳时机 · ' + esc(s.best) + '</div>' : '') +
       (s.tip ? '<div class="pop-note">' + esc(s.tip) + '</div>' : '') +
       '<div class="pop-acts">' +
@@ -671,7 +686,7 @@
   function photoSheet(s) {
     const u = navUrl(s.lat, s.lng, s.name);
     const dn = s.day ? (DAYS.filter(function (d) { return d.id === s.day; })[0] || null) : null;
-    openSheet(s.name, [s.nameEn, dn ? dn.dow + ' · ' + dn.title : '通用'].filter(Boolean).join(' · '),
+    openSheet(s.name, [deEn(s.nameDe, s.nameEn), dn ? dn.dow + ' · ' + dn.title : '通用'].filter(Boolean).join(' · '),
       (s.best ? '<div class="photo-tip"><b>最佳时机</b><span>' + esc(s.best) + '</span></div>' : '') +
       (s.tip ? '<div class="photo-tip"><b>小贴士</b><span>' + esc(s.tip) + '</span></div>' : '') +
       '<div class="btn-row" style="display:grid;gap:9px;margin-top:14px">' +
@@ -804,7 +819,7 @@
           pts.push([p.lat, p.lng]);
           L.marker([p.lat, p.lng], { icon: makePin('', r.color, String(pi + 1)) })
             .addTo(overlayGroup)
-            .bindPopup(popupHtml(p.name, (p.nameEn || '') + (p.note ? ' · ' + p.note : ''),
+            .bindPopup(popupHtml(p.name, deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''),
               p.lat, p.lng, p.name));
           allPts.push([p.lat, p.lng]);
         });
@@ -870,7 +885,7 @@
         out += '<button class="place" data-maplot="' + p.lat + ',' + p.lng + '">' +
           '<span class="place-ic" style="--tint:' + r.color + ';--tint-soft:' + r.soft + '">' +
             icon(p.kind === 'transit' ? 'train' : 'pin') + '</span>' +
-          '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' + esc(p.nameEn) +
+          '<span class="place-tx"><b>' + esc(p.name) + '</b><span>' + esc(deEn(p.nameDe, p.nameEn)) +
             (p.note ? ' · ' + esc(p.note) : '') + '</span></span>' +
           '<span class="place-go">' + icon('pin') + '</span></button>';
       });
@@ -889,7 +904,7 @@
             '<button class="place-main" data-photo-open="' + esc(s.id) + '">' +
               '<span class="place-ic" style="--tint:#d03a2f;--tint-soft:#fdeceb">' + icon('camera') + '</span>' +
               '<span class="place-tx"><b>' + esc(s.name) + '</b><span>' +
-                esc([s.nameEn, s.best || (dn ? dn.dow : '')].filter(Boolean).join(' · ')) +
+                esc([deEn(s.nameDe, s.nameEn), s.best || (dn ? dn.dow : '')].filter(Boolean).join(' · ')) +
               '</span></span>' +
             '</button>' +
             '<button class="photo-x" data-photo-map="' + esc(s.id) + '" aria-label="在地图查看">' +
@@ -1400,7 +1415,7 @@
       return editorRow('t', i, route, bits.filter(Boolean).join(' · '), 'data-edit-leg="' + i + '"');
     });
     const placeRows = day.places.map(function (p, i) {
-      return editorRow('p', i, p.name, [p.nameEn, p.note].filter(Boolean).join(' · '));
+      return editorRow('p', i, p.name, [deEn(p.nameDe, p.nameEn), p.note].filter(Boolean).join(' · '));
     });
 
     openSheet('编辑行程', day.dow + ' · ' + day.title,
@@ -2761,7 +2776,7 @@
         const parts = place.dataset.place.split(':');
         const d = DAYS[Number(parts[0])];
         const p = d.places[Number(parts[1])];
-        if (p) navSheet(p.lat, p.lng, p.name, (p.nameEn || '') + (p.note ? ' · ' + p.note : ''));
+        if (p) navSheet(p.lat, p.lng, p.name, deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''));
         return;
       }
 
