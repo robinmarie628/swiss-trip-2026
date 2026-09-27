@@ -3113,12 +3113,68 @@
     return 'https://api.github.com/repos/' + c.repo + '/contents/' + path;
   }
 
-  function ghHeaders() {
+  function ghHeadersFor(c) {
     return {
-      Authorization: 'Bearer ' + ghConfig().token,
+      Authorization: 'Bearer ' + ((c && c.token) || ''),
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
     };
+  }
+
+  function ghHeaders() {
+    return ghHeadersFor(ghConfig());
+  }
+
+  /**
+   * Check a token before relying on it: who it belongs to, how broad it is, and
+   * whether it can actually write to the chosen repo. Saves the user from a
+   * confusing 403 later — and tells them when a token is far more powerful than
+   * this app needs (a token made for `git push` usually is).
+   */
+  async function ghTest(cfg) {
+    if (!cfg || !cfg.token) throw new Error('请先填 Token');
+    const res = await fetch('https://api.github.com/user', { headers: ghHeadersFor(cfg) });
+    if (!res.ok) throw new Error(await ghError(res));
+    const me = await res.json();
+    const scopes = res.headers.get('X-OAuth-Scopes') || '';
+
+    const out = { login: me.login, scopes: scopes, repo: null, repoErr: '' };
+    if (cfg.repo) {
+      const r2 = await fetch('https://api.github.com/repos/' + cfg.repo, { headers: ghHeadersFor(cfg) });
+      if (r2.ok) {
+        const j = await r2.json();
+        out.repo = {
+          full: j.full_name,
+          isPrivate: !!j.private,
+          canPush: !!(j.permissions && j.permissions.push),
+        };
+      } else {
+        out.repoErr = await ghError(r2);
+      }
+    }
+    return out;
+  }
+
+  function ghTestReport(r, cfg) {
+    const warn = function (s) { return '<b style="color:#c0392b">' + s + '</b>'; };
+    const lines = ['✓ Token 有效，属于 <b>' + esc(r.login) + '</b>'];
+    if (r.scopes) {
+      const broad = /(^|,\s*)(repo|admin:org|delete_repo|workflow)(,|$)/.test(r.scopes);
+      lines.push('类型：classic token · 权限 <b>' + esc(r.scopes) + '</b>' +
+        (broad ? ' —— ' + warn('范围偏大（能读写你名下所有仓库）') +
+          '，建议换成只给这一个仓库 Contents 权限的 fine-grained token' : ''));
+    } else {
+      lines.push('类型：fine-grained token（细粒度权限读不出来，用下面的仓库检查判断）');
+    }
+    if (r.repoErr) {
+      lines.push(warn('✗ 仓库 ' + esc(cfg.repo) + '：' + esc(r.repoErr)));
+    } else if (r.repo) {
+      lines.push('✓ 仓库 <b>' + esc(r.repo.full) + '</b>（' +
+        (r.repo.isPrivate ? '私有' : warn('公开')) + '）');
+      lines.push(r.repo.canPush ? '✓ 有写入权限，可以上传' : warn('✗ 没有写入权限，上传会失败'));
+      if (!r.repo.isPrivate) lines.push(warn('注意：公开仓库会让行程与账目对所有人可见'));
+    }
+    return lines.join('<br>');
   }
 
   async function ghError(res) {
@@ -3242,11 +3298,41 @@
         '5. Generate token，复制 <b>github_pat_…</b> 填到上面<br>' +
         '<b>仓库</b>填 owner/name（如 robinmarie628/swiss-trip-2026）；分支一般 main；' +
         '路径随便，默认 sync/swiss-trip.json，不存在会自动创建。<br>' +
+        '<b>之前推送代码用的 Token 能用吗？</b>能用（只要有 Contents 写权限就行），' +
+        '但那种多半是 classic token、能读写你名下<b>所有</b>仓库，放进网页风险更大；' +
+        '建议新开一个只授权单仓库的 fine-grained token。拿不准就点下面的「测试连接」。<br>' +
         '仓库建议设为<b>私有</b> —— 公开仓库会让行程与账目对所有人可见。' +
         'Token 只保存在这台手机里，不会上传到任何地方。</div>' +
       '<button class="btn block primary" id="ghSave" style="margin-top:14px;height:46px">保存</button>' +
+      '<button class="btn block ghost" id="ghTest" style="margin-top:8px">测试连接（先保存，或直接测上面填的）</button>' +
+      '<div class="hint" id="ghTestOut" style="display:none;margin-top:10px;line-height:1.7"></div>' +
       '<button class="btn block ghost" id="ghClear" style="margin-top:8px">清除配置</button>',
       function () {
+        const readForm = function () {
+          return {
+            repo: $('#ghRepo').value.trim(),
+            branch: $('#ghBranch').value.trim() || 'main',
+            path: $('#ghPath').value.trim() || 'sync/swiss-trip.json',
+            token: $('#ghToken').value.trim(),
+          };
+        };
+        $('#ghTest').addEventListener('click', function () {
+          const btn = this;
+          const out = $('#ghTestOut');
+          btn.disabled = true;
+          btn.textContent = '测试中…';
+          out.style.display = 'block';
+          out.innerHTML = '正在检查…';
+          ghTest(readForm()).then(function (r) {
+            btn.disabled = false;
+            btn.textContent = '测试连接';
+            out.innerHTML = ghTestReport(r, readForm());
+          }, function (e) {
+            btn.disabled = false;
+            btn.textContent = '测试连接';
+            out.innerHTML = '<b style="color:#c0392b">✗ ' + esc((e && e.message) || String(e)) + '</b>';
+          });
+        });
         $('#ghSave').addEventListener('click', function () {
           const repo = $('#ghRepo').value.trim();
           const token = $('#ghToken').value.trim();
