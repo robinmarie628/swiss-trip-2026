@@ -3306,7 +3306,15 @@
     const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
     const info = await ghWrite(JSON.stringify(ghPayload(), null, 2), 'sync: swiss-trip 数据 · ' + stamp);
     store.set(GH_LAST, Date.now());
-    return { path: (info.content && info.content.path) || ghConfig().path };
+    // Also refresh the public copy friends read, so one tap keeps both current —
+    // otherwise it is far too easy to upload your backup and leave friends on an
+    // old version. Non-fatal: a token scoped only to the data repo must not make
+    // the backup itself look like a failure.
+    let shared = false;
+    if (appRepo()) {
+      try { await ghSharePush(); shared = true; } catch (e) { shared = false; }
+    }
+    return { path: (info.content && info.content.path) || ghConfig().path, shared: shared };
   }
 
   async function ghSyncPull() {
@@ -3362,15 +3370,28 @@
     if (!res.ok) throw new Error('找不到分享文件（HTTP ' + res.status + '）');
     const payload = await res.json();
     if (!payload || !payload.user) throw new Error('分享文件格式不对');
-    // Always snapshot what the viewer had, so 「退出」 can put it back. Snapshot
-    // unconditionally: "do they have data?" is hard to answer (a budget or a
-    // single expense counts), and restoring an empty store is harmless.
+    // Snapshot the viewer's own data ONCE so 「退出」 can put it back. Only when
+    // no snapshot exists: on a refresh the store already holds the shared data,
+    // so snapshotting again would destroy the viewer's real data.
     try {
-      localStorage.setItem(SHARE_SNAP,
-        JSON.stringify({ user: STORE.raw(), expenses: expenses() }));
+      if (!localStorage.getItem(SHARE_SNAP)) {
+        localStorage.setItem(SHARE_SNAP,
+          JSON.stringify({ user: STORE.raw(), expenses: expenses() }));
+      }
     } catch (e) {}
     applyPayload(payload);
     return payload;
+  }
+
+  /** re-fetch and re-apply the share — used by the banner 「刷新」 */
+  function refreshShare() {
+    loadShare().then(function (p) {
+      showShareBar(p);
+      refreshAfterEdit();
+      toast('已更新到最新分享' + (p.syncedAt ? '（' + p.syncedAt.slice(0, 16).replace('T', ' ') + '）' : ''));
+    }).catch(function (e) {
+      toast('刷新失败：' + ((e && e.message) || e));
+    });
   }
 
   function showShareBar(payload) {
@@ -3386,8 +3407,9 @@
       else document.body.insertBefore(el, document.body.firstChild);
     }
     const when = payload.syncedAt ? payload.syncedAt.slice(0, 16).replace('T', ' ') : '';
-    el.innerHTML = '<span>' + icon('link') + '正在查看朋友分享的行程' +
+    el.innerHTML = '<span>' + icon('link') + '朋友分享的行程' +
       (when ? ' · ' + esc(when) : '') + '</span>' +
+      '<button class="btn sm ghost" data-share-refresh="1">刷新</button>' +
       '<button class="btn sm ghost" data-share-exit="1">退出</button>';
     el.hidden = false;
   }
@@ -3539,6 +3561,13 @@
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && sheetOpen) closeSheet(); });
 
     bindLinkGesture();
+
+    // A friend re-tapping the share link only changes the hash, which does NOT
+    // reload the page — so without this they'd keep seeing the copy they loaded
+    // the first time. Re-run the share load whenever #share comes back.
+    window.addEventListener('hashchange', function () {
+      if (/^#share\b/i.test(location.hash || '')) maybeLoadShare(true);
+    });
 
     // delegated clicks
     document.addEventListener('click', function (e) {
@@ -3957,7 +3986,7 @@
         ghPushBtn.textContent = '上传中…';
         const back = function () { ghPushBtn.disabled = false; ghPushBtn.textContent = '上传到 GitHub'; };
         ghSyncPush().then(function (r) {
-          toast('已同步到 GitHub：' + r.path);
+          toast('已同步到 GitHub：' + r.path + (r.shared ? '，并更新了分享' : ''));
           back();
           renderMore();
         }, function (e) {
@@ -4005,6 +4034,9 @@
         copyText(shareLink(), '已复制分享链接');
         return;
       }
+
+      const shareRefresh = t.closest('[data-share-refresh]');
+      if (shareRefresh) { refreshShare(); return; }
 
       const shareExit = t.closest('[data-share-exit]');
       if (shareExit) {
