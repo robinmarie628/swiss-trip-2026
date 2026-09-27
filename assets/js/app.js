@@ -176,6 +176,31 @@
       '&origin=' + o + '&destination=' + d + '&travelmode=transit';
   }
 
+  /**
+   * Open an external link in a new tab — and NEVER in this one.
+   *
+   * A real anchor with target="_blank" is how every other external link in this
+   * app is opened, and it is the only form that cannot accidentally replace the
+   * app. It matters: `window.open(url, '_blank', 'noopener')` returns null by
+   * spec, so an earlier `if (!w) location.href = url` fallback fired on *every*
+   * tap and navigated the app itself to Google Maps / the SBB deep link — which
+   * is exactly why the app came back blank afterwards.
+   *
+   * Call synchronously from within a tap so the browser still counts it as a
+   * user gesture (a delayed open gets popup-blocked on mobile).
+   */
+  function openExternal(url) {
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); }, 0);
+  }
+
   /** the German/English label SBB understands, falling back to whatever we have */
   function sbbLabel(ref) {
     if (!ref) return '';
@@ -314,8 +339,8 @@
       msg = '已打开 SBB：' + r.from + ' → ' + r.to;
     }
     setInfo(text);
-    const w = window.open(u, '_blank', 'noopener');
-    if (!w) window.location.href = u;
+    // new tab only — the sheet must survive so the traveller lands back on it
+    openExternal(u);
     toast(msg);
   }
 
@@ -2060,8 +2085,7 @@
             if (!fv || !tv) { toast('请填写起点和终点'); return; }
             const fr = resolveRef(fv);
             const tr = resolveRef(tv);
-            const u = gmapsTransitUrl(fr, tr);
-            window.open(u, '_blank', 'noopener');
+            openExternal(gmapsTransitUrl(fr, tr));
             return;
           }
 
@@ -3494,7 +3518,7 @@
       }
 
       const ol = t.closest('[data-open-link]');
-      if (ol) { window.open(ol.dataset.openLink, '_blank', 'noopener'); return; }
+      if (ol) { openExternal(ol.dataset.openLink); return; }
 
       const ap = t.closest('[data-add-photo]');
       if (ap) { pickPhoto(); return; }
