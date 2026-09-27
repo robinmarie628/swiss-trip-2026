@@ -160,13 +160,46 @@
   }
 
   /**
-   * Xiaohongshu (RED) web search. The site renders results client-side, but
-   * /search_result?keyword=… is its canonical search URL (the page title comes
-   * back as "<keyword> - 小红书搜索"), and on a phone it offers to open the app.
+   * Xiaohongshu (RED) web search — only the fallback for when the app is not
+   * installed. The site renders results client-side; the title comes back as
+   * "<keyword> - 小红书搜索".
    */
   function xhsUrl(q) {
     return 'https://www.xiaohongshu.com/search_result?keyword=' +
       encodeURIComponent(String(q || '').trim());
+  }
+
+  /**
+   * Xiaohongshu's app deeplink for a search, straight from RED's own deeplink
+   * spec: xhsdiscover://search/result, with `keyword` required (+ optional
+   * `source`). The web page is not the point — RED's mobile web search often
+   * answers with "你访问的页面不见了", so hand the query to the app instead.
+   */
+  function xhsScheme(q) {
+    return 'xhsdiscover://search/result?keyword=' +
+      encodeURIComponent(String(q || '').trim()) + '&source=deeplink';
+  }
+
+  /**
+   * Launch an app through its URL scheme without losing this page.
+   *
+   * A same-tab navigation to a custom scheme is handed to the OS; when the app
+   * takes over, this page is backgrounded rather than unloaded. If nothing
+   * takes over (app not installed) we fall back to the web version in a NEW
+   * tab, so the workbench itself is never replaced.
+   */
+  function openAppScheme(scheme, fallbackUrl) {
+    let left = false;
+    const onVis = function () { if (document.hidden) left = true; };
+    document.addEventListener('visibilitychange', onVis);
+    try { window.location.href = scheme; } catch (e) {}
+    setTimeout(function () {
+      document.removeEventListener('visibilitychange', onVis);
+      if (!left && !document.hidden && fallbackUrl) {
+        toast('没打开小红书 App，改用网页版');
+        openExternal(fallbackUrl);
+      }
+    }, 1600);
   }
 
   /**
@@ -795,8 +828,8 @@
           icon('nav') + 'Google 地图导航</a>' +
         '<a class="btn block" href="' + u.apple + '" target="_blank" rel="noopener">' +
           icon('nav') + 'Apple 地图导航</a>' +
-        '<a class="btn block ghost" href="' + xhsUrl(s.name) + '" target="_blank" rel="noopener">' +
-          icon('globe') + '在小红书搜「' + esc(s.name) + '」</a>' +
+        '<button class="btn block ghost" data-xhs="' + esc(s.name) + '">' +
+          icon('globe') + '在小红书搜「' + esc(s.name) + '」</button>' +
         '<button class="btn block ghost" data-photo-copy="' + esc(s.id) + '">' +
           icon('link') + '复制地址</button>' +
         '<button class="btn block ghost" data-photo-map="' + esc(s.id) + '">' +
@@ -2825,8 +2858,8 @@
       '<div class="btn-row" style="display:grid;gap:9px">' +
         '<a class="btn block primary" href="' + u.google + '" target="_blank" rel="noopener">' + icon('nav') + 'Google 地图导航</a>' +
         '<a class="btn block" href="' + u.apple + '" target="_blank" rel="noopener">' + icon('nav') + 'Apple 地图导航</a>' +
-        '<a class="btn block ghost" href="' + xhsUrl(search || name) + '" target="_blank" rel="noopener">' +
-          icon('globe') + '在小红书搜「' + esc(search || name) + '」</a>' +
+        '<button class="btn block ghost" data-xhs="' + esc(search || name) + '">' +
+          icon('globe') + '在小红书搜「' + esc(search || name) + '」</button>' +
         '<a class="btn block ghost" href="' + u.geo + '">' + icon('pin') + '用手机默认地图打开</a>' +
         '<button class="btn block ghost" data-copy="' + lat + ',' + lng + '">复制坐标 ' + lat + ', ' + lng + '</button>' +
         '<button class="btn block ghost" data-map-here="' + lat + ',' + lng + '">在工作台地图中定位</button>' +
@@ -3200,9 +3233,17 @@
         '<input id="ghPath" type="text" autocomplete="off" placeholder="sync/swiss-trip.json" value="' + esc(c.path || 'sync/swiss-trip.json') + '"></div>' +
       '<div class="field"><label>Personal Access Token</label>' +
         '<input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_… 或 ghp_…" value="' + esc(c.token || '') + '"></div>' +
-      '<div class="hint">建议用 <b>Fine-grained token</b>，只授权这个仓库的 <b>Contents: Read and write</b>。' +
-        'Token 只存在这台手机的浏览器里，不会上传。<br>' +
-        '仓库建议设为<b>私有</b> —— 公开仓库会让行程与账目对所有人可见。</div>' +
+      '<div class="hint" style="margin-top:12px;line-height:1.75">' +
+        '<b>怎么拿 Token</b><br>' +
+        '1. 打开 github.com → 右上角头像 → <b>Settings</b><br>' +
+        '2. 左侧最下 <b>Developer settings</b> → Personal access tokens → <b>Fine-grained tokens</b><br>' +
+        '3. <b>Generate new token</b>；Repository access 选 <b>Only select repositories</b>，勾上你的仓库<br>' +
+        '4. Permissions → Repository permissions → <b>Contents</b> 改成 <b>Read and write</b><br>' +
+        '5. Generate token，复制 <b>github_pat_…</b> 填到上面<br>' +
+        '<b>仓库</b>填 owner/name（如 robinmarie628/swiss-trip-2026）；分支一般 main；' +
+        '路径随便，默认 sync/swiss-trip.json，不存在会自动创建。<br>' +
+        '仓库建议设为<b>私有</b> —— 公开仓库会让行程与账目对所有人可见。' +
+        'Token 只保存在这台手机里，不会上传到任何地方。</div>' +
       '<button class="btn block primary" id="ghSave" style="margin-top:14px;height:46px">保存</button>' +
       '<button class="btn block ghost" id="ghClear" style="margin-top:8px">清除配置</button>',
       function () {
@@ -3301,6 +3342,14 @@
       // sort UI. Only the sort controls stay live.
       if (state.sorting && t.closest('#tlList, #placeList, #legList') &&
           !t.closest('[data-move-kind], [data-sort-done], [data-sort-auto]')) {
+        return;
+      }
+
+      // 小红书：hand the query to the app (its mobile web search 404s)
+      const xhsBtn = t.closest('[data-xhs]');
+      if (xhsBtn) {
+        const q = xhsBtn.dataset.xhs;
+        openAppScheme(xhsScheme(q), xhsUrl(q));
         return;
       }
 
