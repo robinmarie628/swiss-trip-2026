@@ -176,24 +176,45 @@
       '&origin=' + o + '&destination=' + d + '&travelmode=transit';
   }
 
+  /** the German/English label SBB understands, falling back to whatever we have */
+  function sbbLabel(ref) {
+    if (!ref) return '';
+    return ref.nameDe || ref.nameEn || ref.name || '';
+  }
+
+  /**
+   * Translate a resolved place/hotel into the nearest *real* Swiss station.
+   *
+   * This is the crux of the SBB problem: the app (and the timetable) only route
+   * between stations, so a hotel name or a sight like Bachalpsee comes back as
+   * "no connection". Coordinates, on the other hand, resolve cleanly, so we look
+   * up the closest stop and use that name instead. If we already have a station
+   * id we use it directly; if there are no coordinates we fall back to the
+   * German/English label (best effort).
+   */
+  async function toStation(ref) {
+    if (!ref) return null;
+    if (ref.stationId && ref.name) return { name: ref.name, stationId: ref.stationId };
+    if (ref.lat != null && ref.lng != null) {
+      try {
+        const list = await SERVICES.stationsNear(ref.lat, ref.lng);
+        if (list && list.length) return list[0];
+      } catch (e) { /* network hiccup — fall through to the textual label */ }
+    }
+    const label = sbbLabel(ref);
+    return label ? { name: label } : null;
+  }
+
   /**
    * Build an SBB Mobile deep link. `app.sbbmobile.ch` is SBB's universal-link
    * handler: on a phone it opens the SBB Mobile app with the chosen stations
    * pre-filled; if the app isn't installed it falls back to the SBB web
-   * timetable (which shows App Store / Play Store links). We pass the
-   * German/English place name — never the Chinese label, which SBB's geocoder
-   * can't resolve. Falls back to lat,lng only when no textual name exists.
+   * timetable (which shows App Store / Play Store links). Stations only — pass
+   * the output of toStation(), never a hotel/POI name.
    */
-  function sbbUrl(fromRef, toRef) {
-    const enc = function (r) {
-      if (!r) return '';
-      const label = r.nameDe || r.nameEn || r.name || '';
-      if (label) return label;
-      if (r.lat != null && r.lng != null) return r.lat + ',' + r.lng;
-      return '';
-    };
-    const o = encodeURIComponent(enc(fromRef));
-    const d = encodeURIComponent(enc(toRef));
+  function sbbUrl(fromSt, toSt) {
+    const o = encodeURIComponent((fromSt && fromSt.name) || '');
+    const d = encodeURIComponent((toSt && toSt.name) || '');
     return 'https://app.sbbmobile.ch/timetable?from=' + o + '&to=' + d;
   }
 
@@ -1787,7 +1808,7 @@
         icon('ticket') + '用 SBB App 查票购票</button>' +
       '<div class="hint" style="margin-top:8px">' +
         'Google 地图会同时给出公交、步行与驾车方案，适合 SBB 没有覆盖到的最后一公里。<br>' +
-        '点「SBB App」会直接在手机上打开 SBB Mobile，已按所选起点 / 终点填好，可查班次并买票；没装 App 会自动跳到 SBB 网页。</div>' +
+        'SBB 只认车站名：点「SBB App」会先自动把酒店 / 景点换成最近的车站（例如「Sunstar Hotel」→「Grindelwald, Firstbahn」），再打开 SBB Mobile 查班次、买票；没装 App 会自动跳到 SBB 网页。</div>' +
       '<div id="tpResults" style="margin-top:14px"></div>' +
       '<div class="sheet-sep"></div>' +
       '<button class="btn block ghost" id="tpManual">手动添加一段交通</button>';
@@ -1898,8 +1919,63 @@
             if (!fv || !tv) { toast('请填写起点和终点'); return; }
             const fr = resolveRef(fv);
             const tr = resolveRef(tv);
-            const u = sbbUrl(fr, tr);
-            window.open(u, '_blank', 'noopener');
+            const btn = $('#tpSbb');
+            const orig = btn.innerHTML;
+
+            // SBB only routes between stations, so a hotel / sight has to be
+            // swapped for its nearest stop first. Plain station names need no
+            // lookup — open straight away.
+            const needsLookup = (fr && fr.lat != null) || (tr && tr.lat != null);
+            if (!needsLookup) {
+              window.open(sbbUrl({ name: sbbLabel(fr) }, { name: sbbLabel(tr) }), '_blank', 'noopener');
+              return;
+            }
+
+            // open the tab synchronously (still inside the user gesture) so
+            // mobile browsers don't block the later redirect as a popup
+            const win = window.open('', '_blank');
+            if (win) {
+              try {
+                win.document.write('<meta name="viewport" content="width=device-width,initial-scale=1">' +
+                  '<p style="font:15px system-ui;padding:24px;color:#666">正在解析最近车站…</p>');
+              } catch (e) { /* about:blank is writable in practice; ignore if not */ }
+            }
+            btn.disabled = true;
+            btn.innerHTML = '正在解析最近车站…';
+
+            Promise.all([toStation(fr), toStation(tr)]).then(function (res) {
+              btn.disabled = false;
+              btn.innerHTML = orig;
+              const fs = res[0], ts = res[1];
+              if (!fs || !fs.name || !ts || !ts.name) {
+                if (win) win.close();
+                toast('没能解析到车站，请手动输入车站名');
+                return;
+              }
+              // show the substitution in the inputs so the route is transparent
+              if (fs.name !== fv) $('#tpFrom').value = fs.name;
+              if (ts.name !== tv) $('#tpTo').value = ts.name;
+
+              // both endpoints on one stop means there is nothing to ride —
+              // say so rather than opening an empty SBB page
+              const sameStation = (fs.stationId && ts.stationId)
+                ? fs.stationId === ts.stationId
+                : fs.name === ts.name;
+              if (sameStation) {
+                if (win) win.close();
+                toast('起点与终点是同一车站（' + fs.name + '），这段不需要乘车');
+                return;
+              }
+
+              const u = sbbUrl(fs, ts);
+              if (win) win.location.href = u; else window.location.href = u;
+              toast('已换成最近车站：' + fs.name + ' → ' + ts.name);
+            }).catch(function () {
+              btn.disabled = false;
+              btn.innerHTML = orig;
+              if (win) win.close();
+              toast('解析车站失败，请重试，或手动填写车站名');
+            });
             return;
           }
         });

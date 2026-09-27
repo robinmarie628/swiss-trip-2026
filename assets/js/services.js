@@ -76,6 +76,37 @@
       });
   }
 
+  /**
+   * Nearest real stations to a coordinate, closest first.
+   *
+   * This is what lets us hand a *hotel* or a *sight* to SBB: SBB only routes
+   * between stations, so "Sunstar Hotel Grindelwald" or "Bachalpsee" returns
+   * "no connection". The official station directory (the same data Google Maps
+   * and SBB draw from) can, however, translate a coordinate into the closest
+   * stop — train station, tram or bus stop. We keep only entries that carry a
+   * station id, because the endpoint also returns bare street addresses.
+   */
+  async function stationsNear(lat, lng) {
+    if (lat == null || lng == null) return [];
+    const json = await get(TRANSIT + '/locations?x=' + encodeURIComponent(lat) +
+      '&y=' + encodeURIComponent(lng), { tries: 2, timeout: 9000 });
+    return (json.stations || [])
+      .filter(function (s) { return s && s.id && s.name; })
+      .map(function (s) {
+        const c = s.coordinate || {};
+        return {
+          name: s.name,
+          // the API reports x = latitude, y = longitude (see searchStations)
+          lat: c.x != null ? c.x : lat,
+          lng: c.y != null ? c.y : lng,
+          stationId: s.id,
+          distance: s.distance || 0,
+          kind: 'station',
+        };
+      })
+      .sort(function (a, b) { return a.distance - b.distance; });
+  }
+
   /** query Open-Meteo's geocoder for non-station places */
   async function searchGeocode(q) {
     const json = await get(GEOCODE + '?name=' + encodeURIComponent(q) + '&count=6&language=zh',
@@ -355,6 +386,7 @@
     searchPlaces: searchPlaces,
     searchPlacesStreaming: searchPlacesStreaming,
     searchStations: searchStations,
+    stationsNear: stationsNear,
     reverseGeocode: reverseGeocode,
     connections: connections,
     fx: fx,
