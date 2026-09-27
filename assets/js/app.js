@@ -114,6 +114,7 @@
     itinMode: 'cards',
     walletMode: 'ledger',
     mapFilter: 'all',
+    mapRoute: true,
     mapReady: false,
     mapLayer: 'std',
     mapDirty: false,
@@ -719,6 +720,9 @@
   // every marker of the current render, keyed by coordinate, so tapping a row
   // in the list can find and animate the matching pin
   let mapMarkers = [];
+  // the suggested visiting order for the current map filter, or null.
+  // { filter, order: [placeIdx…], km } — cleared when the filter changes.
+  let mapSuggest = null;
 
   const TILE = {
     std: {
@@ -919,8 +923,117 @@
     return isNaN(i) ? DAYS.map((d, j) => j) : [i];
   }
 
+  /** great-circle distance in km — good enough to rank walking/riding hops */
+  function haversineKm(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad;
+    const dLng = (b.lng - a.lng) * rad;
+    const s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+
+  /**
+   * Suggest a visiting order for one day: start and finish at the day's hotel
+   * and see every sight once, minimising total distance.
+   *
+   * Up to 8 sights we solve it EXACTLY — ≤ 40 320 tours over a precomputed
+   * distance matrix, a few milliseconds. Nearest-neighbour + 2-opt is NOT good
+   * enough here: measured against the real Geneva day it returned 12.5 km where
+   * the traveller's own order was 11.8 km, i.e. a "suggestion" that was worse
+   * than doing nothing. Days never hold more than ~8 sights, so exact it is;
+   * anything larger falls back to the heuristic.
+   *
+   * The itinerary's own order is always scored too, so the result can never be
+   * worse than what the traveller already planned.
+   */
+  function suggestOrder(hotel, places) {
+    if (!hotel || !places.length) return null;
+    const pts = [{ lat: hotel.lat, lng: hotel.lng }].concat(places);   // index 0 = hotel
+    const D = pts.map(function (a) {
+      return pts.map(function (b) { return haversineKm(a, b); });
+    });
+    const tourKm = function (ord) {
+      let prev = 0, t = 0;
+      ord.forEach(function (i) { const q = i + 1; t += D[prev][q]; prev = q; });
+      return t + D[prev][0];
+    };
+    const idx = places.map(function (_, i) { return i; });
+    let best = null;
+    const consider = function (ord) {
+      const k = tourKm(ord);
+      if (!best || k < best.km - 1e-9) best = { order: ord.slice(), km: k };
+    };
+
+    consider(idx);                                  // never worse than the plan
+
+    if (places.length <= 8) {
+      const walk = function (rest, cur) {
+        if (!rest.length) { consider(cur); return; }
+        for (let i = 0; i < rest.length; i++) {
+          walk(rest.slice(0, i).concat(rest.slice(i + 1)), cur.concat([rest[i]]));
+        }
+      };
+      walk(idx, []);
+    } else {
+      let left = idx.slice(), cur = 0, tour = [];
+      while (left.length) {
+        let bi = 0, bd = Infinity;
+        for (let k = 0; k < left.length; k++) {
+          const d = D[cur][left[k] + 1];
+          if (d < bd) { bd = d; bi = k; }
+        }
+        cur = left.splice(bi, 1)[0] + 1;
+        tour.push(cur - 1);
+      }
+      consider(tour);
+      let improved = true, guard = 0;
+      while (improved && guard++ < 40) {
+        improved = false;
+        for (let i = 0; i < tour.length - 1; i++) {
+          for (let j = i + 1; j < tour.length; j++) {
+            const cand = tour.slice(0, i).concat(tour.slice(i, j + 1).reverse(), tour.slice(j + 1));
+            if (tourKm(cand) < tourKm(tour) - 1e-9) { tour = cand; improved = true; }
+          }
+        }
+        consider(tour);
+      }
+    }
+    return best;
+  }
+
+  /** toggle the suggestion for the current filter; recomputed every time */
+  function toggleSuggest() {
+    const di = Number(state.mapFilter);
+    if (isNaN(di)) {
+      toast('先选一天，再规划建议路线');
+      return;
+    }
+    if (mapSuggest && mapSuggest.filter === state.mapFilter) {
+      mapSuggest = null;
+      renderMapContent();
+      toast('已隐藏建议路线');
+      return;
+    }
+    const d = DAYS[di];
+    const h = hotelById(d.hotelId);
+    if (!h) { toast('这一天没有酒店，无法以酒店为起终点规划'); return; }
+    if (!d.places.length) { toast('这一天还没有景点'); return; }
+    const s = suggestOrder(h, d.places);
+    if (!s) { toast('没有可规划的点'); return; }
+    mapSuggest = { filter: state.mapFilter, order: s.order, km: s.km };
+    renderMapContent();
+    const sameAsPlan = s.order.every(function (v, i) { return v === i; });
+    toast(sameAsPlan
+      ? '行程顺序已经是最优的（' + d.places.length + ' 个点 · 约 ' + s.km.toFixed(1) + ' km）'
+      : '建议路线：' + d.places.length + ' 个点 · 约 ' + s.km.toFixed(1) +
+        ' km（起终点：' + h.name + '）');
+  }
+
   function renderMapContent() {
     if (!state.mapReady) return;
+    // a suggestion belongs to one filter — drop it when the day changes
+    if (mapSuggest && mapSuggest.filter !== state.mapFilter) mapSuggest = null;
     const isAll = state.mapFilter === 'all';
     const days = currentMapDays();
     overlayGroup.clearLayers();
@@ -963,6 +1076,7 @@
       days.forEach(function (di) {
         const d = DAYS[di];
         const r = regionOf(d);
+        const sug = (mapSuggest && mapSuggest.filter === String(di)) ? mapSuggest : null;
 
         const h = hotelById(d.hotelId);
         if (h) {
@@ -973,18 +1087,35 @@
           allPts.push([h.lat, h.lng]);
         }
 
+        // while a suggestion is showing the pins are numbered by ITS order, so
+        // the map reads as the proposed route rather than the itinerary order
+        const sugPos = {};
+        if (sug) sug.order.forEach(function (pi, k) { sugPos[pi] = k + 1; });
+
         const pts = [];
         d.places.forEach(function (p, pi) {
           pts.push([p.lat, p.lng]);
-          const mk = L.marker([p.lat, p.lng], { icon: makePin('', r.color, String(pi + 1)) })
+          const num = sug ? String(sugPos[pi] || '') : String(pi + 1);
+          const mk = L.marker([p.lat, p.lng], { icon: makePin('', r.color, num) })
             .addTo(overlayGroup)
-            .bindPopup(popupHtml(p.name, deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''),
+            .bindPopup(popupHtml(p.name, deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : '') +
+              (sug ? ' ｜ 建议第 ' + sugPos[pi] + ' 站' : ''),
               p.lat, p.lng, p.name));
           indexMarker(mk, p.lat, p.lng, p.name);
           allPts.push([p.lat, p.lng]);
         });
 
-        if (pts.length > 1) {
+        if (sug && h) {
+          // hotel → every sight in the suggested order → back to the hotel
+          const loop = [[h.lat, h.lng]].concat(
+            sug.order.map(function (i) { return [d.places[i].lat, d.places[i].lng]; }),
+            [[h.lat, h.lng]]);
+          L.polyline(loop, {
+            color: '#e30613', weight: 3.5, opacity: .95, lineJoin: 'round',
+          }).addTo(overlayGroup).bindPopup(
+            '<b>建议路线</b><div class="pop-sub">起终点：' + esc(h.name) +
+            ' · 约 ' + sug.km.toFixed(1) + ' km</div>');
+        } else if (state.mapRoute && pts.length > 1) {
           L.polyline(pts, {
             color: r.color, weight: 3, opacity: .9,
             dashArray: '7 7', lineJoin: 'round',
@@ -1005,6 +1136,15 @@
         });
       });
     }
+
+    // the two toggles say what they will do next
+    const sugOn = !!(mapSuggest && mapSuggest.filter === state.mapFilter);
+    const btnRoute = $('[data-map-action="route"]');
+    const btnSug = $('[data-map-action="suggest"]');
+    // while the suggestion is up it replaces the itinerary line, so tapping
+    // 显示路线 switches back rather than toggling an invisible line
+    if (btnRoute) btnRoute.textContent = (sugOn || !state.mapRoute) ? '显示路线' : '隐藏路线';
+    if (btnSug) btnSug.textContent = sugOn ? '隐藏建议' : '建议路线';
 
     // photo spots are drawn last so they sit above the route lines
     const spots = photoSpotsInView(days);
@@ -3684,7 +3824,22 @@
       if (mapAct && map) {
         const a = mapAct.dataset.mapAction;
         if (a === 'fit') renderMapContent();
-        if (a === 'route') renderMapContent();
+        if (a === 'route') {
+          // the suggested route replaces the itinerary line, so when it is up
+          // this button switches back to the real itinerary instead of toggling
+          const sugOn = !!(mapSuggest && mapSuggest.filter === state.mapFilter);
+          if (sugOn) {
+            mapSuggest = null;
+            state.mapRoute = true;
+            renderMapContent();
+            toast('已切回行程路线');
+            return;
+          }
+          state.mapRoute = !state.mapRoute;
+          renderMapContent();
+          toast(state.mapRoute ? '已显示行程路线' : '已隐藏行程路线');
+        }
+        if (a === 'suggest') toggleSuggest();
         if (a === 'terrain') {
           state.mapLayer = state.mapLayer === 'std' ? 'terrain' : 'std';
           const cfg = TILE[state.mapLayer];
