@@ -1261,7 +1261,7 @@ main {
 .conn-sec.walk { color: var(--muted); }
 .conn-sec.walk svg { width: 13px; height: 13px; flex: none; }
 .conn-plat { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.conn-acts { display: flex; gap: 8px; justify-content: flex-end; padding: 11px 13px 12px; }
+.conn-acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding: 11px 13px 12px; }
 
 /* ---------- misc lists -------------------------------------------------- */
 .kv { display: flex; gap: 12px; padding: 9px 0; font-size: 13px; }

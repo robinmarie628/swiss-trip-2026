@@ -201,41 +201,12 @@
     setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); }, 0);
   }
 
-  /** the German/English label SBB understands, falling back to whatever we have */
-  function sbbLabel(ref) {
-    if (!ref) return '';
-    return ref.nameDe || ref.nameEn || ref.name || '';
-  }
-
-  /**
-   * Translate a resolved place/hotel into the nearest *real* Swiss station.
-   *
-   * This is the crux of the SBB problem: the app (and the timetable) only route
-   * between stations, so a hotel name or a sight like Bachalpsee comes back as
-   * "no connection". Coordinates, on the other hand, resolve cleanly, so we look
-   * up the closest stop and use that name instead. If we already have a station
-   * id we use it directly; if there are no coordinates we fall back to the
-   * German/English label (best effort).
-   */
-  async function toStation(ref) {
-    if (!ref) return null;
-    if (ref.stationId && ref.name) return { name: ref.name, stationId: ref.stationId };
-    if (ref.lat != null && ref.lng != null) {
-      try {
-        const list = await SERVICES.stationsNear(ref.lat, ref.lng);
-        if (list && list.length) return list[0];
-      } catch (e) { /* network hiccup — fall through to the textual label */ }
-    }
-    const label = sbbLabel(ref);
-    return label ? { name: label } : null;
-  }
-
   /**
    * Build an SBB Mobile deep link. `app.sbbmobile.ch` is SBB's universal-link
    * handler: on a phone it opens the SBB Mobile app with the chosen stations
    * pre-filled; if the app isn't installed it falls back to the SBB web
-   * timetable (which shows App Store / Play Store links). Stations only — pass
-   * the output of toStation(), never a hotel/POI name.
+   * timetable (which shows App Store / Play Store links). Stations only — SBB
+   * cannot route to a hotel name or a bare address.
    *
    * Deliberately carries NO date/time. SBB's app only half-supports them: the
    * universal link accepts a `date`/`time` pair, but any value it can't parse
@@ -250,125 +221,19 @@
     return 'https://app.sbbmobile.ch/timetable?from=' + o + '&to=' + d;
   }
 
-  /** the timetable engine's cleanest option: fewest changes, then shortest ride */
-  function pickBestConnection(list) {
-    return list.slice().sort(function (a, b) {
-      if (a.transfers !== b.transfers) return a.transfers - b.transfers;
-      return (a.durationMin || 9999) - (b.durationMin || 9999);
-    })[0];
-  }
-
-  /** key a planned route by the 起点/终点 pair it was computed for */
-  function sbbRouteKey(fv, tv) { return fv + '\u0001' + tv; }
-
   /**
-   * Work out which stations to hand SBB for a pair of endpoints.
-   *
-   * Planned ahead of the tap (see primeSbbRoute) so the button can open the SBB
-   * app *synchronously*. An async window.open gets popup-blocked on mobile, and
-   * the old "blank tab, then redirect it" workaround left the traveller stranded
-   * on a loading page instead of back on this sheet — the tab never came back.
-   *
-   * kind: 'route'   engine found a connection → board/alight stops
-   *       'direct'  both endpoints are already station names
-   *       'walk'    the engine found nothing to ride
-   *       'same'    both endpoints resolve to one stop
-   *       'nearest' engine unreachable → nearest stop to each endpoint
+   * The stations to hand SBB for one looked-up connection: where you actually
+   * board the first vehicle and leave the last one. The timetable engine already
+   * resolved these, so they are real stops SBB can find — unlike the
+   * connection's own origin, which may be a street address. Falls back to the
+   * connection's endpoints when there is nothing to ride.
    */
-  function planSbbRoute(day, fv, tv) {
-    const key = sbbRouteKey(fv, tv);
-    const fr = resolveRef(fv);
-    const tr = resolveRef(tv);
-    const needsEngine = (fr && fr.lat != null) || (tr && tr.lat != null);
-    if (!needsEngine) {
-      return Promise.resolve({ key: key, kind: 'direct', from: sbbLabel(fr), to: sbbLabel(tr) });
+  function connectionStations(c) {
+    const rides = ((c && c.sections) || []).filter(function (s) { return s.kind === 'ride'; });
+    if (rides.length) {
+      return { board: rides[0].from, alight: rides[rides.length - 1].to };
     }
-    return SERVICES.connections({
-      from: fr, to: tr,
-      date: ($('#tpDate') && $('#tpDate').value) || day.date,
-      time: ($('#tpTime') && $('#tpTime').value) || '08:00',
-      limit: 5,
-    }).then(function (list) {
-      const best = pickBestConnection(list);
-      const rides = best.sections.filter(function (s) { return s.kind === 'ride'; });
-      if (!rides.length) return { key: key, kind: 'walk' };
-      return {
-        key: key, kind: 'route',
-        board: rides[0].from,
-        alight: rides[rides.length - 1].to,
-        line: rides.map(function (r) { return (r.cat + ' ' + r.num).trim(); }).join(' + '),
-        duration: best.duration || '',
-      };
-    }).catch(function () {
-      // engine unreachable — fall back to each endpoint's nearest stop
-      return Promise.all([toStation(fr), toStation(tr)]).then(function (res) {
-        const fs = res[0], ts = res[1];
-        if (!fs || !fs.name || !ts || !ts.name) throw new Error('没能解析到车站');
-        if (fs.name === ts.name) return { key: key, kind: 'same', stop: fs.name };
-        return { key: key, kind: 'nearest', from: fs.name, to: ts.name };
-      });
-    });
-  }
-
-  /**
-   * Open the planned route. Uses a new tab so this sheet stays exactly where it
-   * is — the traveller lands back on their 起点/终点 when they leave the SBB app.
-   */
-  function openRoute(r) {
-    const info = $('#tpSbbInfo');
-    const setInfo = function (t) {
-      if (!info) return;
-      info.textContent = t || '';
-      info.style.display = t ? 'block' : 'none';
-    };
-    if (r.kind === 'walk') {
-      setInfo('这段距离很近，步行即可');
-      toast('这段距离很近，步行即可，无需乘车');
-      return;
-    }
-    if (r.kind === 'same') {
-      setInfo('起点与终点是同一车站：' + r.stop);
-      toast('起点与终点是同一车站（' + r.stop + '），这段不需要乘车');
-      return;
-    }
-    let u, msg, text;
-    if (r.kind === 'route') {
-      u = sbbUrl({ name: r.board }, { name: r.alight });
-      text = '最优路线 ' + r.line + '：' + r.board + ' 上车 → ' + r.alight + ' 下车（约 ' + r.duration + '）';
-      msg = '已按最优路线 ' + r.line + '：' + r.board + ' → ' + r.alight;
-    } else if (r.kind === 'nearest') {
-      u = sbbUrl({ name: r.from }, { name: r.to });
-      text = '最近车站：' + r.from + ' → ' + r.to;
-      msg = '已换成最近车站：' + r.from + ' → ' + r.to;
-    } else {
-      u = sbbUrl({ name: r.from }, { name: r.to });
-      text = 'SBB 路线：' + r.from + ' → ' + r.to;
-      msg = '已打开 SBB：' + r.from + ' → ' + r.to;
-    }
-    setInfo(text);
-    // new tab only — the sheet must survive so the traveller lands back on it
-    openExternal(u);
-    toast(msg);
-  }
-
-  /** resolve the route ahead of the tap so openRoute() can stay synchronous */
-  function primeSbbRoute(day) {
-    const fe = $('#tpFrom');
-    const te = $('#tpTo');
-    const fv = fe ? fe.value.trim() : '';
-    const tv = te ? te.value.trim() : '';
-    if (!fv || !tv) return;
-    if (tpRoute && tpRoute.key === sbbRouteKey(fv, tv)) return;
-    planSbbRoute(day, fv, tv).then(function (r) {
-      const cf = $('#tpFrom') ? $('#tpFrom').value.trim() : '';
-      const ct = $('#tpTo') ? $('#tpTo').value.trim() : '';
-      if (sbbRouteKey(cf, ct) === r.key) tpRoute = r;
-    }).catch(function () { /* the click handler retries with a spinner */ });
-  }
-
-  function schedulePrimeSbb(day) {
-    if (tpRouteTimer) clearTimeout(tpRouteTimer);
-    tpRouteTimer = setTimeout(function () { primeSbbRoute(day); }, 500);
+    return { board: (c && c.fromName) || '', alight: (c && c.toName) || '' };
   }
 
   /** the connection list renders below the fold — bring it into view so a tap
@@ -1856,9 +1721,6 @@
   let tpConns = [];
   let tpOpen = {};
   let tpRefs = { from: null, to: null };
-  // SBB route planned ahead of the tap, keyed by the current 起点/终点 values
-  let tpRoute = null;
-  let tpRouteTimer = null;
 
   function resolveRef(text) {
     const t = String(text || '').trim();
@@ -1971,12 +1833,9 @@
         icon('train') + '查询可行班次（SBB 实时）</button>' +
       '<button class="btn block ghost" id="tpMap" style="height:46px;margin-top:8px">' +
         icon('map') + '用 Google 地图查公交路线</button>' +
-      '<button class="btn block ghost" id="tpSbb" style="height:46px;margin-top:8px">' +
-        icon('ticket') + '用 SBB App 查票购票</button>' +
-      '<div class="hint" id="tpSbbInfo" style="display:none;margin-top:8px"></div>' +
       '<div class="hint" style="margin-top:8px">' +
         'Google 地图会同时给出公交、步行与驾车方案，适合 SBB 没有覆盖到的最后一公里。<br>' +
-        'SBB 只认车站名：点「SBB App」会按上面选的日期 / 时间算出「就近的上车站 / 下车站」（例如酒店旁步行几分钟的 tram 站，而不是门口的慢速巴士站），再打开 SBB Mobile 买票。App 内默认按当前时间查询，日期与时间可在 App 里调整；没装 App 会自动跳到 SBB 网页。</div>' +
+        '查到班次后，每段都有两个操作：「用这段购票」会用该段的上车 / 下车站名直接打开 SBB Mobile 买票（App 内按当前时间查询，日期时间可在 App 里改）；「加入到行程」则把这段写进当天的交通里。</div>' +
       '<div id="tpResults" style="margin-top:14px"></div>' +
       '<div class="sheet-sep"></div>' +
       '<button class="btn block ghost" id="tpManual">手动添加一段交通</button>';
@@ -2014,7 +1873,8 @@
           '<div class="conn-acts">' +
             '<button class="btn sm ghost" data-conn-detail="' + i + '">' +
               (open ? '收起' : '详情') + '</button>' +
-            '<button class="btn sm primary" data-conn-add="' + i + '">用这段</button>' +
+            '<button class="btn sm ghost" data-conn-add="' + i + '">加入到行程</button>' +
+            '<button class="btn sm primary" data-conn-buy="' + i + '">用这段购票</button>' +
           '</div>' +
         '</div>';
       }).join('');
@@ -2037,28 +1897,27 @@
         const inner = $('.sheet-inner');
         wireSeqChips(inner, '#tpFrom', '#tpTo', 'data-tp-set', $('#tpChipHint'));
 
-        // plan the SBB route ahead of the tap so the button opens the app
-        // synchronously (and never leaves a stray loading tab behind)
-        tpRoute = null;
-        ['#tpFrom', '#tpTo'].forEach(function (sel) {
-          const el = $(sel);
-          if (el) el.addEventListener('input', function () { schedulePrimeSbb(day); });
-        });
-        ['#tpDate', '#tpTime'].forEach(function (sel) {
-          const el = $(sel);
-          if (el) el.addEventListener('change', function () { schedulePrimeSbb(day); });
-        });
-        primeSbbRoute(day);
-
         inner.addEventListener('click', function (ev) {
-          // a chip tap rewrites 起点/终点 programmatically — re-plan for it
-          if (ev.target.closest('[data-tp-set]')) schedulePrimeSbb(day);
-
           const det = ev.target.closest('[data-conn-detail]');
           if (det) {
             const i = Number(det.dataset.connDetail);
             tpOpen[i] = !tpOpen[i];
             renderConnections();
+            return;
+          }
+
+          // buy this leg: hand SBB the actual boarding / alighting stops of the
+          // chosen connection (the engine already resolved them), so the app
+          // opens on a route it can find — a hotel name or a bare address would
+          // not resolve there
+          const buy = ev.target.closest('[data-conn-buy]');
+          if (buy) {
+            const c = tpConns[Number(buy.dataset.connBuy)];
+            if (!c) return;
+            const st = connectionStations(c);
+            if (!st.board || !st.alight) { toast('这段没有可用的车站名'); return; }
+            openExternal(sbbUrl({ name: st.board }, { name: st.alight }));
+            toast('已在 SBB 搜索：' + st.board + ' → ' + st.alight);
             return;
           }
 
@@ -2093,40 +1952,6 @@
             const fr = resolveRef(fv);
             const tr = resolveRef(tv);
             openExternal(gmapsTransitUrl(fr, tr));
-            return;
-          }
-
-          if (ev.target.closest('#tpSbb')) {
-            const fv = $('#tpFrom').value.trim();
-            const tv = $('#tpTo').value.trim();
-            if (!fv || !tv) { toast('请填写起点和终点'); return; }
-            const info = $('#tpSbbInfo');
-            if (info) { info.textContent = ''; info.style.display = 'none'; }
-
-            // the route was planned when the sheet opened / fields changed, so
-            // we can open the app right inside this tap — no popup block, and
-            // this sheet stays put for when the traveller comes back
-            if (tpRoute && tpRoute.key === sbbRouteKey(fv, tv)) {
-              openRoute(tpRoute);
-              return;
-            }
-
-            // fields changed moments ago and the re-plan hasn't landed yet —
-            // resolve here, showing progress on the button (not a stray tab)
-            const btn = $('#tpSbb');
-            const orig = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '正在规划最优上车 / 下车站…';
-            planSbbRoute(day, fv, tv).then(function (r) {
-              tpRoute = r;
-              btn.disabled = false;
-              btn.innerHTML = orig;
-              openRoute(r);
-            }).catch(function () {
-              btn.disabled = false;
-              btn.innerHTML = orig;
-              toast('规划失败，请重试，或手动输入车站名');
-            });
             return;
           }
         });
