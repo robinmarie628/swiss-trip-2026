@@ -945,14 +945,18 @@
    * (a place's note, a photo spot's 最佳时机). No network, no guessing — if
    * the data says nothing we simply do not constrain that point.
    */
+  /* Every window in this file is MINUTES past midnight — the traveller's own
+     requirement is stored that way, so the hints must be too. Mixing hours and
+     minutes here silently broke the penalty maths once. */
   function preferredWindow(p) {
     const s = String((p && p.note) || '') + ' ' + String((p && p.best) || '') +
       ' ' + String((p && p.name) || '');
-    if (/清晨|早上|上午|日出/.test(s)) return [6, 12];
-    if (/中午|午间/.test(s)) return [11, 14];
-    if (/下午/.test(s)) return [12, 18];
-    if (/傍晚|黄昏|日落|夕阳/.test(s)) return [16, 21];
-    if (/夜景|夜晚|夜/.test(s)) return [19, 23];
+    const h = function (a, b) { return [a * 60, b * 60]; };
+    if (/清晨|早上|上午|日出/.test(s)) return h(6, 12);
+    if (/中午|午间/.test(s)) return h(11, 14);
+    if (/下午/.test(s)) return h(12, 18);
+    if (/傍晚|黄昏|日落|夕阳/.test(s)) return h(16, 21);
+    if (/夜景|夜晚|夜/.test(s)) return h(19, 23);
     return null;
   }
 
@@ -985,11 +989,12 @@
       const q = i + 1;
       clock += hop[prev][q];
       km += D[prev][q];
-      const w = pts[q].win;
+      const w = pts[q].win;              // minutes past midnight
       if (w) {
-        const h = clock / 60;
-        if (h < w[0]) clock += (w[0] - h) * 60 * 0.6;   // early: idle a little
-        else if (h > w[1]) clock += (h - w[1]) * 60;    // late: real penalty
+        // a window the traveller set themselves outranks a hint from the data
+        const weight = pts[q].hard ? 3 : 1;
+        if (clock < w[0]) clock += (w[0] - clock) * 0.6 * weight;   // early: idle
+        else if (clock > w[1]) clock += (clock - w[1]) * weight;    // late: penalise
       }
       const at = clock;
       clock += pts[q].dwell;
@@ -1016,11 +1021,19 @@
    * The itinerary's own order is always scored too, so the result can never be
    * worse than what the traveller already planned.
    */
-  function suggestOrder(hotel, places) {
+  function suggestOrder(hotel, places, dayId) {
     if (!hotel || !places.length) return null;
-    const pts = [{ lat: hotel.lat, lng: hotel.lng, win: null, dwell: 0 }].concat(places.map(function (p) {
-      return { lat: p.lat, lng: p.lng, win: preferredWindow(p), dwell: dwellMinutes(p) };
-    }));
+    const pts = [{ lat: hotel.lat, lng: hotel.lng, win: null, dwell: 0, hard: false }]
+      .concat(places.map(function (p) {
+        // a window the traveller set wins over the hint baked into the data
+        const own = dayId ? STORE.placeTime(dayId, p.name) : null;
+        return {
+          lat: p.lat, lng: p.lng,
+          win: own || preferredWindow(p),
+          hard: !!own,
+          dwell: dwellMinutes(p),
+        };
+      }));
     const D = pts.map(function (a) {
       return pts.map(function (b) { return haversineKm(a, b); });
     });
@@ -1148,7 +1161,7 @@
     const h = hotelById(d.hotelId);
     if (!h) { toast('这一天没有酒店，无法以酒店为起终点规划'); return; }
     if (!d.places.length) { toast('这一天还没有景点'); return; }
-    const s = suggestOrder(h, d.places);
+    const s = suggestOrder(h, d.places, d.id);
     if (!s) { toast('没有可规划的点'); return; }
     mapSuggest = {
       filter: state.mapFilter, order: s.order, km: s.km,
@@ -1164,15 +1177,22 @@
 
   /** the suggested order as a small timetable, so the day is judgeable */
   function openSuggestSheet(d, h, s, sameAsPlan) {
+    let unmet = 0;
     const rows = s.stops.map(function (st, k) {
       const p = d.places[st.i];
-      const w = preferredWindow(p);
-      const late = w && (st.at / 60) > w[1];
+      const own = STORE.placeTime(d.id, p.name);
+      const w = own || preferredWindow(p);          // both in minutes
+      const bad = !!w && (st.at > w[1] || st.at < w[0] - 1);
+      if (bad && own) unmet++;
       return '<div class="kv"><span class="k">' + (k + 1) + '</span>' +
         '<span class="v">' + esc(fmtClock(st.at)) + '–' + esc(fmtClock(st.until)) +
         ' · ' + esc(p.name) +
-        (w ? ' <span style="color:var(--muted)">（宜 ' + w[0] + ':00–' + w[1] + ':00）</span>' : '') +
-        (late ? ' <b style="color:#c0392b">偏晚</b>' : '') + '</span></div>';
+        (own
+          ? ' <b>要求 ' + esc(fmtClock(own[0])) + '–' + esc(fmtClock(own[1])) + '</b>'
+          : (w ? ' <span style="color:var(--muted)">（宜 ' + esc(fmtClock(w[0])) + '–' +
+              esc(fmtClock(w[1])) + '）</span>' : '')) +
+        (bad ? ' <b style="color:#c0392b">' + (own ? '未满足' : '偏晚') + '</b>' : '') +
+        '</span></div>';
     }).join('');
 
     openSheet('建议路线', '起终点：' + h.name,
@@ -1191,8 +1211,12 @@
         '全程约 ' + Math.round(s.minutes / 60 * 10) / 10 + ' 小时（' +
         s.km.toFixed(1) + ' km）。估算方式：短距离按步行、长距离按乘车（含约 6 分钟候车），' +
         '每个点按类型留出停留时间（景点约 45 分、区域 30 分、交通点 10 分）。<br>' +
-        '标注「宜 …」的点，是数据里本来就有「最佳时机」提示，排序时会照顾它；' +
-        '没有提示的点不设时间限制。' +
+        '标「要求」的点是<b>你自己设的时间要求</b>，排序会优先满足；' +
+        '标「宜」的是数据里本来就有的「最佳时机」提示，只作参考。' +
+        (unmet
+          ? '<br><b style="color:#c0392b">有 ' + unmet +
+            ' 个时间要求在现有条件下排不进——点该地点里的「时间要求」放宽，或调整行程。</b>'
+          : '') +
       '</div>');
   }
 
@@ -3206,18 +3230,71 @@
     }
   }
 
-  function navSheet(lat, lng, name, sub, search) {
+  function navSheet(lat, lng, name, sub, search, dayId) {
     const u = navUrl(lat, lng, name);
+    const own = dayId ? STORE.placeTime(dayId, name) : null;
     openSheet(name, sub || '', 
       '<div class="btn-row" style="display:grid;gap:9px">' +
         '<a class="btn block primary" href="' + u.google + '" target="_blank" rel="noopener">' + icon('nav') + 'Google 地图导航</a>' +
         '<a class="btn block" href="' + u.apple + '" target="_blank" rel="noopener">' + icon('nav') + 'Apple 地图导航</a>' +
         '<button class="btn block ghost" data-xhs="' + esc(search || name) + '">' +
           icon('globe') + '在小红书搜「' + esc(search || name) + '」</button>' +
+        (dayId
+          ? '<button class="btn block ghost" data-place-time="' + esc(dayId) + '|' + esc(name) + '">' +
+            icon('clock') + (own
+              ? '时间要求：' + fmtClock(own[0]) + '–' + fmtClock(own[1])
+              : '设置时间要求（给路线优化器）') + '</button>'
+          : '') +
         '<a class="btn block ghost" href="' + u.geo + '">' + icon('pin') + '用手机默认地图打开</a>' +
         '<button class="btn block ghost" data-copy="' + lat + ',' + lng + '">复制坐标 ' + lat + ', ' + lng + '</button>' +
         '<button class="btn block ghost" data-map-here="' + lat + ',' + lng + '">在工作台地图中定位</button>' +
       '</div>');
+  }
+
+  /**
+   * Set the traveller's own time requirement for one place. This is the piece
+   * no dataset can supply — "the cable car's last ride is 17:00", "the museum
+   * shuts on Mondays" — so it is stated by hand and honoured by the optimiser.
+   */
+  function openPlaceTimeSheet(dayId, name) {
+    const own = STORE.placeTime(dayId, name);
+    const val = function (min, dflt) { return min == null ? dflt : fmtClock(min * 60); };
+    openSheet('时间要求 · ' + name, '路线优化时会优先满足',
+      '<div style="font-size:13px;line-height:1.7;color:var(--ink-2);margin-bottom:12px">' +
+        '填「从–到」表示这段时间内要到达（例如缆车末班 17:00，就填 到 17:00）。' +
+        '留空表示不限。' +
+      '</div>' +
+      '<div class="tp-when">' +
+        '<div class="field" style="flex:1"><label>从</label>' +
+          '<input id="ptFrom" type="time" value="' + esc(val(own && own[0], '08:00')) + '"></div>' +
+        '<div class="field" style="flex:1"><label>到</label>' +
+          '<input id="ptTo" type="time" value="' + esc(val(own && own[1], '18:00')) + '"></div>' +
+      '</div>' +
+      '<button class="btn block primary" id="ptSave" style="margin-top:14px;height:46px">保存</button>' +
+      '<button class="btn block ghost" id="ptClear" style="margin-top:8px">不限（清除）</button>',
+      function () {
+        const toMin = function (v) {
+          const m = /^(\d{1,2}):(\d{2})$/.exec(String(v || ''));
+          return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+        };
+        $('#ptSave').addEventListener('click', function () {
+          const a = toMin($('#ptFrom').value);
+          const b2 = toMin($('#ptTo').value);
+          if (a == null || b2 == null || b2 <= a) { toast('请填有效的起止时间'); return; }
+          STORE.setPlaceTime(dayId, name, [a, b2]);
+          mapSuggest = null;                       // recompute on next use
+          closeSheet();
+          renderMapContent();
+          toast('已设时间要求 ' + fmtClock(a) + '–' + fmtClock(b2));
+        });
+        $('#ptClear').addEventListener('click', function () {
+          STORE.setPlaceTime(dayId, name, null);
+          mapSuggest = null;
+          closeSheet();
+          renderMapContent();
+          toast('已清除时间要求');
+        });
+      }, 'editor');
   }
 
   function expenseSheet(prefill) {
@@ -3588,7 +3665,7 @@
     if (!payload || !payload.user) throw new Error('文件格式不对');
     const cur = STORE.raw();
     ['places', 'legs', 'legEdits', 'blocks', 'hidden', 'photoSpots', 'hiddenPhotos',
-      'order', 'sortMode', 'presets', 'budget', 'rates', 'photoVisible'].forEach(function (k) {
+      'order', 'sortMode', 'placeTimes', 'presets', 'budget', 'rates', 'photoVisible'].forEach(function (k) {
       if (payload.user[k] !== undefined) cur[k] = payload.user[k];
     });
     STORE.save();
@@ -3926,6 +4003,13 @@
         return;
       }
 
+      const ptBtn = t.closest('[data-place-time]');
+      if (ptBtn) {
+        const parts = String(ptBtn.dataset.placeTime).split('|');
+        openPlaceTimeSheet(parts[0], parts.slice(1).join('|'));
+        return;
+      }
+
       // 小红书：hand the query to the app (its mobile web search 404s)
       const xhsBtn = t.closest('[data-xhs]');
       if (xhsBtn) {
@@ -3966,7 +4050,7 @@
           const city = d.region && d.region !== 'transit' ? (regionOf(d).label || '') : '';
           const q = city && p.name.indexOf(city) < 0 ? city + ' ' + p.name : p.name;
           navSheet(p.lat, p.lng, p.name,
-            deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''), q);
+            deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''), q, d.id);
         }
         return;
       }

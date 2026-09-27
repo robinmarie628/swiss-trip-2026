@@ -29,6 +29,8 @@
       order: {},         // dayId -> { b: [key], p: [key], t: [key] }
       sortMode: {},      // dayId -> { b|p|t: 'manual' }  (absent => 'auto')
       geoCache: {},      // 'lat,lng' -> reverse-geocoded address
+      placeTimes: {},    // dayId -> { placeName: [fromMin, toMin] } — the user's
+                         // own time requirement, fed to the route optimiser
       presets: null,     // null => fall back to EXPENSE_PRESETS
       budget: null,
       rates: null,       // { cny, eur, date, source, at }
@@ -71,7 +73,8 @@
       if (raw) {
         const parsed = JSON.parse(raw);
         data = Object.assign(blank(), parsed || {});
-        ['places', 'legs', 'blocks', 'hidden', 'order', 'sortMode', 'geoCache', 'legEdits']
+        ['places', 'legs', 'blocks', 'hidden', 'order', 'sortMode', 'geoCache',
+          'legEdits', 'placeTimes']
           .forEach(function (k) {
             if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {};
           });
@@ -314,6 +317,25 @@
       note: place.note || '',
       stationId: place.stationId || null,
     });
+    save();
+  }
+
+  /**
+   * The traveller's own time requirement for a place, as [fromMin, toMin]
+   * minutes past midnight — "be at the cable car by 09:00" is knowledge no
+   * dataset has, so it is theirs to state and the optimiser's to honour.
+   * Keyed by place name, matching keyOf('p', …).
+   */
+  function placeTime(dayId, name) {
+    const day = data.placeTimes[dayId];
+    const w = day && day[name];
+    return (Array.isArray(w) && w.length === 2) ? w : null;
+  }
+
+  function setPlaceTime(dayId, name, win) {
+    if (!data.placeTimes[dayId]) data.placeTimes[dayId] = {};
+    if (!win) delete data.placeTimes[dayId][name];
+    else data.placeTimes[dayId][name] = [Number(win[0]), Number(win[1])];
     save();
   }
 
@@ -566,6 +588,7 @@
     resolved: resolved, apply: apply,
     addPlace: addPlace, addLeg: addLeg, addBlock: addBlock,
     updateLeg: updateLeg,
+    placeTime: placeTime, setPlaceTime: setPlaceTime,
     remove: remove, restoreHidden: restoreHidden,
     presets: presets, setPresets: setPresets, updatePreset: updatePreset,
     addPreset: addPreset, removePreset: removePreset, resetPresets: resetPresets,
