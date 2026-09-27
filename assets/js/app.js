@@ -933,36 +933,107 @@
     return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
   }
 
+  /** rough door-to-door minutes for a hop: walk the short ones, ride the rest */
+  function hopMinutes(a, b) {
+    const km = haversineKm(a, b);
+    if (km <= 1.2) return (km / 4.5) * 60;   // on foot
+    return 6 + (km / 18) * 60;               // ~6 min waiting, then ride
+  }
+
   /**
-   * Suggest a visiting order for one day: start and finish at the day's hotel
-   * and see every sight once, minimising total distance.
+   * The time of day a sight asks for, read from hints ALREADY in the data
+   * (a place's note, a photo spot's 最佳时机). No network, no guessing — if
+   * the data says nothing we simply do not constrain that point.
+   */
+  function preferredWindow(p) {
+    const s = String((p && p.note) || '') + ' ' + String((p && p.best) || '') +
+      ' ' + String((p && p.name) || '');
+    if (/清晨|早上|上午|日出/.test(s)) return [6, 12];
+    if (/中午|午间/.test(s)) return [11, 14];
+    if (/下午/.test(s)) return [12, 18];
+    if (/傍晚|黄昏|日落|夕阳/.test(s)) return [16, 21];
+    if (/夜景|夜晚|夜/.test(s)) return [19, 23];
+    return null;
+  }
+
+  /**
+   * How long a stop usually takes. A day is mostly spent AT the sights, not
+   * travelling between them, so a schedule that counts only travel claims
+   * "大喷泉 08:53 → 花钟 08:59", i.e. six minutes for a fountain. Kind is
+   * already in the data, so use it.
+   */
+  function dwellMinutes(p) {
+    const k = (p && p.kind) || 'sight';
+    if (k === 'transit') return 10;
+    if (k === 'area') return 30;
+    return 45;
+  }
+
+  const DAY_START = 8 * 60 + 30;   // leave the hotel at 08:30 by default
+
+  /**
+   * Score a visiting order the way the day is actually lived, not on the map:
+   * total elapsed minutes door to door (walking short hops, waiting for the
+   * ones you ride) plus a penalty for reaching a sight outside the time of day
+   * it asks for. Distance alone is misleading — a 2 km tram hop with a wait can
+   * look cheaper than two short walks but cost more of the day.
+   */
+  function tourCost(order, pts, D, hop) {
+    let clock = DAY_START, prev = 0, km = 0;
+    const stops = [];
+    order.forEach(function (i) {
+      const q = i + 1;
+      clock += hop[prev][q];
+      km += D[prev][q];
+      const w = pts[q].win;
+      if (w) {
+        const h = clock / 60;
+        if (h < w[0]) clock += (w[0] - h) * 60 * 0.6;   // early: idle a little
+        else if (h > w[1]) clock += (h - w[1]) * 60;    // late: real penalty
+      }
+      const at = clock;
+      clock += pts[q].dwell;
+      stops.push({ i: i, at: at, until: clock });
+      prev = q;
+    });
+    clock += hop[prev][0];
+    km += D[prev][0];
+    return { minutes: clock - DAY_START, km: km, stops: stops, backAt: clock };
+  }
+
+  /**
+   * Suggest a visiting order for one day: start and finish at the day's hotel,
+   * see every sight once, and minimise the day it actually costs (see
+   * tourCost) rather than raw distance.
    *
-   * Up to 8 sights we solve it EXACTLY — ≤ 40 320 tours over a precomputed
-   * distance matrix, a few milliseconds. Nearest-neighbour + 2-opt is NOT good
-   * enough here: measured against the real Geneva day it returned 12.5 km where
-   * the traveller's own order was 11.8 km, i.e. a "suggestion" that was worse
-   * than doing nothing. Days never hold more than ~8 sights, so exact it is;
-   * anything larger falls back to the heuristic.
+   * Up to 8 sights we solve it EXACTLY — ≤ 40 320 tours over precomputed
+   * distance/time matrices, a few milliseconds. Nearest-neighbour + 2-opt is
+   * not good enough here: measured against the real Geneva day it returned
+   * 12.5 km where the traveller's own order was 11.8 km, i.e. a "suggestion"
+   * worse than doing nothing. Days never hold more than ~8 sights, so exact it
+   * is; anything larger falls back to the heuristic.
    *
    * The itinerary's own order is always scored too, so the result can never be
    * worse than what the traveller already planned.
    */
   function suggestOrder(hotel, places) {
     if (!hotel || !places.length) return null;
-    const pts = [{ lat: hotel.lat, lng: hotel.lng }].concat(places);   // index 0 = hotel
+    const pts = [{ lat: hotel.lat, lng: hotel.lng, win: null, dwell: 0 }].concat(places.map(function (p) {
+      return { lat: p.lat, lng: p.lng, win: preferredWindow(p), dwell: dwellMinutes(p) };
+    }));
     const D = pts.map(function (a) {
       return pts.map(function (b) { return haversineKm(a, b); });
     });
-    const tourKm = function (ord) {
-      let prev = 0, t = 0;
-      ord.forEach(function (i) { const q = i + 1; t += D[prev][q]; prev = q; });
-      return t + D[prev][0];
-    };
+    const hop = pts.map(function (a) {
+      return pts.map(function (b) { return hopMinutes(a, b); });
+    });
     const idx = places.map(function (_, i) { return i; });
     let best = null;
     const consider = function (ord) {
-      const k = tourKm(ord);
-      if (!best || k < best.km - 1e-9) best = { order: ord.slice(), km: k };
+      const c = tourCost(ord, pts, D, hop);
+      if (!best || c.minutes < best.minutes - 1e-9) {
+        best = { order: ord.slice(), minutes: c.minutes, km: c.km, stops: c.stops, backAt: c.backAt };
+      }
     };
 
     consider(idx);                                  // never worse than the plan
@@ -980,7 +1051,7 @@
       while (left.length) {
         let bi = 0, bd = Infinity;
         for (let k = 0; k < left.length; k++) {
-          const d = D[cur][left[k] + 1];
+          const d = hop[cur][left[k] + 1];
           if (d < bd) { bd = d; bi = k; }
         }
         cur = left.splice(bi, 1)[0] + 1;
@@ -993,13 +1064,71 @@
         for (let i = 0; i < tour.length - 1; i++) {
           for (let j = i + 1; j < tour.length; j++) {
             const cand = tour.slice(0, i).concat(tour.slice(i, j + 1).reverse(), tour.slice(j + 1));
-            if (tourKm(cand) < tourKm(tour) - 1e-9) { tour = cand; improved = true; }
+            if (tourCost(cand, pts, D, hop).minutes < tourCost(tour, pts, D, hop).minutes - 1e-9) {
+              tour = cand;
+              improved = true;
+            }
           }
         }
         consider(tour);
       }
     }
     return best;
+  }
+
+  /** 09:05 — the suggested schedule is shown in local clock time */
+  function fmtClock(mins) {
+    const m = Math.round(mins);
+    return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' +
+      String(m % 60).padStart(2, '0');
+  }
+
+  /** direction arrows along a polyline — bearings are clockwise from north */
+  function bearingDeg(a, b) {
+    const rad = Math.PI / 180;
+    const y = Math.sin((b.lng - a.lng) * rad) * Math.cos(b.lat * rad);
+    const x = Math.cos(a.lat * rad) * Math.sin(b.lat * rad) -
+      Math.sin(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos((b.lng - a.lng) * rad);
+    return (Math.atan2(y, x) / rad + 360) % 360;
+  }
+
+  function addArrows(latlngs, color) {
+    if (latlngs.length < 2) return;
+    const segs = [];
+    let total = 0;
+    for (let i = 0; i < latlngs.length - 1; i++) {
+      const a = { lat: latlngs[i][0], lng: latlngs[i][1] };
+      const b = { lat: latlngs[i + 1][0], lng: latlngs[i + 1][1] };
+      const d = haversineKm(a, b);
+      segs.push({ a: a, b: b, d: d });
+      total += d;
+    }
+    if (total <= 0) return;
+    const FRACTIONS = [0.18, 0.42, 0.66, 0.9];
+    FRACTIONS.forEach(function (f) {
+      let want = total * f;
+      for (let i = 0; i < segs.length; i++) {
+        const s = segs[i];
+        if (want <= s.d || i === segs.length - 1) {
+          const t = s.d > 0 ? Math.min(1, want / s.d) : 0;
+          const lat = s.a.lat + (s.b.lat - s.a.lat) * t;
+          const lng = s.a.lng + (s.b.lng - s.a.lng) * t;
+          L.marker([lat, lng], {
+            interactive: false,
+            zIndexOffset: 300,
+            icon: L.divIcon({
+              className: '',
+              html: '<div class="route-arrow" style="--c:' + color + ';' +
+                'transform:rotate(' + bearingDeg(s.a, s.b).toFixed(1) + 'deg)"><i></i></div>',
+              iconSize: [12, 12],
+              iconAnchor: [6, 6],
+            }),
+          }).addTo(overlayGroup);
+          return;
+        }
+        want -= s.d;
+      }
+    });
   }
 
   /** toggle the suggestion for the current filter; recomputed every time */
@@ -1021,13 +1150,50 @@
     if (!d.places.length) { toast('这一天还没有景点'); return; }
     const s = suggestOrder(h, d.places);
     if (!s) { toast('没有可规划的点'); return; }
-    mapSuggest = { filter: state.mapFilter, order: s.order, km: s.km };
+    mapSuggest = {
+      filter: state.mapFilter, order: s.order, km: s.km,
+      minutes: s.minutes, stops: s.stops, backAt: s.backAt,
+    };
     renderMapContent();
     const sameAsPlan = s.order.every(function (v, i) { return v === i; });
     toast(sameAsPlan
-      ? '行程顺序已经是最优的（' + d.places.length + ' 个点 · 约 ' + s.km.toFixed(1) + ' km）'
-      : '建议路线：' + d.places.length + ' 个点 · 约 ' + s.km.toFixed(1) +
-        ' km（起终点：' + h.name + '）');
+      ? '行程顺序已经是最优的（约 ' + Math.round(s.minutes) + ' 分钟）'
+      : '建议路线：' + d.places.length + ' 个点 · 约 ' + Math.round(s.minutes) + ' 分钟');
+    openSuggestSheet(d, h, s, sameAsPlan);
+  }
+
+  /** the suggested order as a small timetable, so the day is judgeable */
+  function openSuggestSheet(d, h, s, sameAsPlan) {
+    const rows = s.stops.map(function (st, k) {
+      const p = d.places[st.i];
+      const w = preferredWindow(p);
+      const late = w && (st.at / 60) > w[1];
+      return '<div class="kv"><span class="k">' + (k + 1) + '</span>' +
+        '<span class="v">' + esc(fmtClock(st.at)) + '–' + esc(fmtClock(st.until)) +
+        ' · ' + esc(p.name) +
+        (w ? ' <span style="color:var(--muted)">（宜 ' + w[0] + ':00–' + w[1] + ':00）</span>' : '') +
+        (late ? ' <b style="color:#c0392b">偏晚</b>' : '') + '</span></div>';
+    }).join('');
+
+    openSheet('建议路线', '起终点：' + h.name,
+      (sameAsPlan
+        ? '<div style="font-size:13.5px;line-height:1.7;color:var(--ink-2);margin-bottom:12px">' +
+          '你现在的顺序已经是最优的，没有可改进的空间。</div>'
+        : '') +
+      '<div class="card"><div class="card-bd tight">' +
+        '<div class="kv"><span class="k">出发</span><span class="v">' +
+          esc(fmtClock(DAY_START)) + ' · ' + esc(h.name) + '</span></div>' +
+        rows +
+        '<div class="kv"><span class="k">回酒店</span><span class="v">' +
+          esc(fmtClock(s.backAt)) + '</span></div>' +
+      '</div></div>' +
+      '<div style="margin-top:12px;font-size:11.5px;line-height:1.65;color:var(--muted)">' +
+        '全程约 ' + Math.round(s.minutes / 60 * 10) / 10 + ' 小时（' +
+        s.km.toFixed(1) + ' km）。估算方式：短距离按步行、长距离按乘车（含约 6 分钟候车），' +
+        '每个点按类型留出停留时间（景点约 45 分、区域 30 分、交通点 10 分）。<br>' +
+        '标注「宜 …」的点，是数据里本来就有「最佳时机」提示，排序时会照顾它；' +
+        '没有提示的点不设时间限制。' +
+      '</div>');
   }
 
   function renderMapContent() {
@@ -1114,12 +1280,14 @@
             color: '#e30613', weight: 3.5, opacity: .95, lineJoin: 'round',
           }).addTo(overlayGroup).bindPopup(
             '<b>建议路线</b><div class="pop-sub">起终点：' + esc(h.name) +
-            ' · 约 ' + sug.km.toFixed(1) + ' km</div>');
+            ' · 约 ' + Math.round(sug.minutes) + ' 分钟 / ' + sug.km.toFixed(1) + ' km</div>');
+          addArrows(loop, '#e30613');
         } else if (state.mapRoute && pts.length > 1) {
           L.polyline(pts, {
             color: r.color, weight: 3, opacity: .9,
             dashArray: '7 7', lineJoin: 'round',
           }).addTo(overlayGroup);
+          addArrows(pts, r.color);
         }
 
         // the rail legs into and out of this day
