@@ -973,7 +973,58 @@
     return 45;
   }
 
-  const DAY_START = 8 * 60 + 30;   // leave the hotel at 08:30 by default
+  const DAY_START = 8 * 60 + 30;   // default: leave the hotel at 08:30
+  const TRANSFER = 20;             // station → first sight, and sight → station
+
+  /** "约 2 小时 27 分" / "约 12 分钟" → minutes, or null when unparseable */
+  function parseDuration(txt) {
+    const s = String(txt || '');
+    const h = /(\d+)\s*小时/.exec(s);
+    const m = /(\d+)\s*分/.exec(s);
+    if (!h && !m) return null;
+    return (h ? Number(h[1]) * 60 : 0) + (m ? Number(m[1]) : 0);
+  }
+
+  /**
+   * The hours a day genuinely leaves for sightseeing.
+   *
+   * A travel day's morning is spent on a train: on 8 Oct the plan reads
+   * "Lauterbrunnen 09:31 → Zürich HB, 约 2 小时 27 分", so nothing in Zürich
+   * can be visited before ~12:20. That is already stated in the itinerary
+   * (transport[].booked + duration) — the optimiser just has to read it
+   * instead of packing every sight into a morning that does not exist.
+   *
+   * A booked leg departing before 15:00 is "the day moves here" → touring
+   * starts after arrival (+ a transfer to the first sight). A later one is
+   * "the day has to leave" → touring must end before it.
+   */
+  function dayWindow(d) {
+    let start = DAY_START, end = null, note = '';
+    ((d && d.transport) || []).forEach(function (l) {
+      if (!l || !l.booked) return;
+      const m = /^(\d{1,2}):(\d{2})$/.exec(String(l.booked));
+      if (!m) return;
+      const dep = Number(m[1]) * 60 + Number(m[2]);
+      const dur = parseDuration(l.duration);
+      if (dep < 15 * 60) {
+        const arr = dep + (dur == null ? 60 : dur) + TRANSFER;
+        if (arr > start) {
+          start = arr;
+          note = '当天 ' + l.booked + ' 从 ' + l.from + ' 出发前往 ' + l.to +
+            (dur != null ? '（约 ' + (Math.round(dur / 6) / 10) + ' 小时）' : '') +
+            '，约 ' + fmtClock(arr) + ' 才能开始游览';
+        }
+      } else {
+        const lim = dep - TRANSFER;
+        if (end == null || lim < end) {
+          end = lim;
+          note = (note ? note + '；' : '') + '当天 ' + l.booked + ' 要离开 ' + l.from +
+            '，需在 ' + fmtClock(lim) + ' 前结束游览';
+        }
+      }
+    });
+    return { start: start, end: end, note: note };
+  }
 
   /**
    * Score a visiting order the way the day is actually lived, not on the map:
@@ -982,8 +1033,10 @@
    * it asks for. Distance alone is misleading — a 2 km tram hop with a wait can
    * look cheaper than two short walks but cost more of the day.
    */
-  function tourCost(order, pts, D, hop) {
-    let clock = DAY_START, prev = 0, km = 0;
+  function tourCost(order, pts, D, hop, win) {
+    const from = (win && win.start) || DAY_START;
+    const until = (win && win.end) || null;
+    let clock = from, prev = 0, km = 0;
     const stops = [];
     order.forEach(function (i) {
       const q = i + 1;
@@ -1003,7 +1056,13 @@
     });
     clock += hop[prev][0];
     km += D[prev][0];
-    return { minutes: clock - DAY_START, km: km, stops: stops, backAt: clock };
+    // missing a booked departure is worse than any detour
+    const over = (until != null && clock > until) ? (clock - until) * 4 : 0;
+    return {
+      score: (clock - from) + over,
+      free: clock - from,
+      km: km, stops: stops, backAt: clock,
+    };
   }
 
   /**
@@ -1021,7 +1080,7 @@
    * The itinerary's own order is always scored too, so the result can never be
    * worse than what the traveller already planned.
    */
-  function suggestOrder(hotel, places, dayId) {
+  function suggestOrder(hotel, places, dayId, win) {
     if (!hotel || !places.length) return null;
     const pts = [{ lat: hotel.lat, lng: hotel.lng, win: null, dwell: 0, hard: false }]
       .concat(places.map(function (p) {
@@ -1043,9 +1102,12 @@
     const idx = places.map(function (_, i) { return i; });
     let best = null;
     const consider = function (ord) {
-      const c = tourCost(ord, pts, D, hop);
-      if (!best || c.minutes < best.minutes - 1e-9) {
-        best = { order: ord.slice(), minutes: c.minutes, km: c.km, stops: c.stops, backAt: c.backAt };
+      const c = tourCost(ord, pts, D, hop, win);
+      if (!best || c.score < best.score - 1e-9) {
+        best = {
+          order: ord.slice(), score: c.score, minutes: c.free,
+          km: c.km, stops: c.stops, backAt: c.backAt,
+        };
       }
     };
 
@@ -1077,7 +1139,7 @@
         for (let i = 0; i < tour.length - 1; i++) {
           for (let j = i + 1; j < tour.length; j++) {
             const cand = tour.slice(0, i).concat(tour.slice(i, j + 1).reverse(), tour.slice(j + 1));
-            if (tourCost(cand, pts, D, hop).minutes < tourCost(tour, pts, D, hop).minutes - 1e-9) {
+            if (tourCost(cand, pts, D, hop, win).score < tourCost(tour, pts, D, hop, win).score - 1e-9) {
               tour = cand;
               improved = true;
             }
@@ -1161,22 +1223,25 @@
     const h = hotelById(d.hotelId);
     if (!h) { toast('这一天没有酒店，无法以酒店为起终点规划'); return; }
     if (!d.places.length) { toast('这一天还没有景点'); return; }
-    const s = suggestOrder(h, d.places, d.id);
+    // a day that starts with a train cannot start sightseeing at 08:30
+    const win = dayWindow(d);
+    const s = suggestOrder(h, d.places, d.id, win);
     if (!s) { toast('没有可规划的点'); return; }
     mapSuggest = {
       filter: state.mapFilter, order: s.order, km: s.km,
-      minutes: s.minutes, stops: s.stops, backAt: s.backAt,
+      minutes: s.minutes, stops: s.stops, backAt: s.backAt, win: win,
     };
     renderMapContent();
     const sameAsPlan = s.order.every(function (v, i) { return v === i; });
     toast(sameAsPlan
       ? '行程顺序已经是最优的（约 ' + Math.round(s.minutes) + ' 分钟）'
       : '建议路线：' + d.places.length + ' 个点 · 约 ' + Math.round(s.minutes) + ' 分钟');
-    openSuggestSheet(d, h, s, sameAsPlan);
+    openSuggestSheet(d, h, s, sameAsPlan, win);
   }
 
   /** the suggested order as a small timetable, so the day is judgeable */
-  function openSuggestSheet(d, h, s, sameAsPlan) {
+  function openSuggestSheet(d, h, s, sameAsPlan, win) {
+    const start = (win && win.start) || DAY_START;
     let unmet = 0;
     const rows = s.stops.map(function (st, k) {
       const p = d.places[st.i];
@@ -1196,18 +1261,24 @@
     }).join('');
 
     openSheet('建议路线', '起终点：' + h.name,
+      (win && win.note
+        ? '<div style="font-size:13px;line-height:1.7;color:var(--ink-2);margin-bottom:12px;' +
+          'padding:10px 12px;border-radius:8px;background:var(--surface-2)">' +
+          icon('train') + ' ' + esc(win.note) + '</div>'
+        : '') +
       (sameAsPlan
         ? '<div style="font-size:13.5px;line-height:1.7;color:var(--ink-2);margin-bottom:12px">' +
           '你现在的顺序已经是最优的，没有可改进的空间。</div>'
         : '') +
       '<div class="card"><div class="card-bd tight">' +
         '<div class="kv"><span class="k">出发</span><span class="v">' +
-          esc(fmtClock(DAY_START)) + ' · ' + esc(h.name) + '</span></div>' +
+          esc(fmtClock(start)) + ' · ' + esc(h.name) + '</span></div>' +
         rows +
         '<div class="kv"><span class="k">回酒店</span><span class="v">' +
           esc(fmtClock(s.backAt)) + '</span></div>' +
       '</div></div>' +
       '<div style="margin-top:12px;font-size:11.5px;line-height:1.65;color:var(--muted)">' +
+        (win && win.note ? '起止时间已按当天的固定班次调整（见上方提示）。<br>' : '') +
         '全程约 ' + Math.round(s.minutes / 60 * 10) / 10 + ' 小时（' +
         s.km.toFixed(1) + ' km）。估算方式：短距离按步行、长距离按乘车（含约 6 分钟候车），' +
         '每个点按类型留出停留时间（景点约 45 分、区域 30 分、交通点 10 分）。<br>' +
