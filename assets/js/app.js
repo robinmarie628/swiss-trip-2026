@@ -258,9 +258,15 @@
     }).join('') + '</div>';
   }
 
-  function legsBare(day) {
+  /** a leg's identity — must match STORE.keyOf('t', …) */
+  function legKeyOf(t) {
+    return String(t.from || '') + '→' + String(t.to || '') + '|' + String(t.mode || '');
+  }
+
+  function legsBare(day, sorting) {
     const r = regionOf(day);
     return day.transport.map(function (t) {
+      const key = legKeyOf(t);
       const route = t.to
         ? esc(t.from) + ' <span class="arrow">→</span> ' + esc(t.to)
         : esc(t.from || '');
@@ -268,7 +274,8 @@
       if (t.mode) parts.push(esc(t.mode));
       if (t.duration) parts.push(esc(t.duration));
       if (t.note) parts.push(esc(t.note));
-      return '<div class="leg" style="' + tintStyle(r) + '">' +
+      return '<div class="leg' + (sorting ? ' is-sortable' : '') + '" style="' + tintStyle(r) + '"' +
+          ' data-hold="1" data-sort-key="' + esc(key) + '">' +
         '<div class="leg-rail"><span class="nub"></span><span class="bar"></span></div>' +
         '<div class="leg-body">' +
           (route ? '<div class="leg-route">' + route + '</div>' : '') +
@@ -276,8 +283,11 @@
           (t.booked
             ? '<div class="leg-booked">' + icon('check') +
               '<span>已预订</span><span class="t">' + esc(t.booked) + ' 发车</span></div>'
-            : '') +
+            : (t.time
+              ? '<div class="leg-time">' + icon('clock') + '<span>' + esc(t.time) + ' 出发</span></div>'
+              : '')) +
         '</div>' +
+        (sorting ? sortBtns('t', key) : '') +
       '</div>';
     }).join('');
   }
@@ -350,13 +360,17 @@
   }
 
   function transportCard(day, title, withAll) {
+    const sorting = sortingThis('t', day.id);
+    const auto = STORE.sortMode(day.id, 't') === 'auto';
+    const sub = auto ? '长按可调整顺序 · 现在按发车时间排' : '长按可调整顺序 · 当前为手动顺序';
     const right = '<div class="rt">' +
       (withAll ? '<button class="btn sm ghost" data-all-bookings="1">全部车次</button>' : '') +
       '<button class="btn sm ghost" data-add-leg-day="1">' + icon('plus') + '</button>' +
       '</div>';
     return '<div class="card">' +
       cardHead(regionOf(day), 'train', title || '交通', '时间均为约数 · 以 SBB App 为准', right) +
-      '<div class="card-bd tight">' + legsBare(day) + '</div></div>';
+      (sorting ? sortBarHtml(day.id, 't') : '<div class="card-note">' + esc(sub) + '</div>') +
+      '<div class="card-bd tight" id="legList">' + legsBare(day, sorting) + '</div></div>';
   }
 
   /* ---- all booked connections + flights, as a sheet ------------------ */
@@ -451,9 +465,10 @@
     renderHero();
     renderChips();
 
-    // long-press to reorder the timeline and the place list
+    // long-press to reorder the timeline, the place list and the transport legs
     attachHold($('#tlList'), day.id, 'b');
     attachHold($('#placeList'), day.id, 'p');
+    attachHold($('#legList'), day.id, 't');
   }
 
   /* ======================== ITINERARY VIEW ============================ */
@@ -628,9 +643,70 @@
       (s.tip ? '<div class="pop-note">' + esc(s.tip) + '</div>' : '') +
       '<div class="pop-acts">' +
         '<a class="btn sm primary" href="' + u.google + '" target="_blank" rel="noopener">导航</a>' +
+        '<button class="btn sm ghost" data-photo-copy="' + esc(s.id) + '">复制地址</button>' +
         '<button class="btn sm ghost" data-photo-hide="' + esc(s.id) + '">' +
           (s._user ? '删除' : '隐藏') + '</button>' +
       '</div>';
+  }
+
+  /** find a photo spot by id, hidden ones included */
+  function photoById(id) {
+    return (typeof PHOTO_SPOTS !== 'undefined' ? PHOTO_SPOTS : [])
+      .concat(STORE.raw().photoSpots || [])
+      .filter(function (s) { return s.id === id; })[0] || null;
+  }
+
+  /** the action sheet behind a photo spot — reachable from the map list */
+  function photoSheet(s) {
+    const u = navUrl(s.lat, s.lng, s.name);
+    const dn = s.day ? (DAYS.filter(function (d) { return d.id === s.day; })[0] || null) : null;
+    openSheet(s.name, [s.nameEn, dn ? dn.dow + ' · ' + dn.title : '通用'].filter(Boolean).join(' · '),
+      (s.best ? '<div class="photo-tip"><b>最佳时机</b><span>' + esc(s.best) + '</span></div>' : '') +
+      (s.tip ? '<div class="photo-tip"><b>小贴士</b><span>' + esc(s.tip) + '</span></div>' : '') +
+      '<div class="btn-row" style="display:grid;gap:9px;margin-top:14px">' +
+        '<a class="btn block primary" href="' + u.google + '" target="_blank" rel="noopener">' +
+          icon('nav') + 'Google 地图导航</a>' +
+        '<a class="btn block" href="' + u.apple + '" target="_blank" rel="noopener">' +
+          icon('nav') + 'Apple 地图导航</a>' +
+        '<button class="btn block ghost" data-photo-copy="' + esc(s.id) + '">' +
+          icon('link') + '复制地址</button>' +
+        '<button class="btn block ghost" data-photo-map="' + esc(s.id) + '">' +
+          icon('map') + '在工作台地图中查看</button>' +
+        '<button class="btn block ghost" data-photo-hide="' + esc(s.id) + '">' +
+          icon(s._user ? 'trash' : 'x') + (s._user ? '删除这个拍照点' : '隐藏这个拍照点') + '</button>' +
+      '</div>', null, 'photo');
+  }
+
+  /**
+   * Copy a photo spot's address. The curated spots only carry coordinates, so
+   * the address is reverse-geocoded on first use and then cached — after that
+   * it works with no connection.
+   */
+  function copyPhotoAddress(s) {
+    const cached = STORE.cachedAddress(s.lat, s.lng);
+    if (cached) { copyText(cached, '地址已复制'); return; }
+
+    const fallback = s.name + ' · ' + s.lat + ', ' + s.lng;
+    if (typeof SERVICES === 'undefined' || !SERVICES.reverseGeocode) {
+      copyText(fallback, '已复制名称与坐标');
+      return;
+    }
+    toast('正在解析地址…');
+    SERVICES.reverseGeocode(s.lat, s.lng).then(function (addr) {
+      STORE.setAddress(s.lat, s.lng, addr);
+      copyText(addr, '地址已复制');
+    }).catch(function () {
+      // no network, or nothing mapped there: the coordinates still work
+      copyText(fallback, '已复制名称与坐标');
+    });
+  }
+
+  function copyText(txt, okMsg) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(txt).then(
+        function () { toast(okMsg || '已复制'); },
+        function () { toast(txt); });
+    } else toast(txt);
   }
 
   /** which photo spots to draw for the current map filter */
@@ -799,12 +875,14 @@
         spots.map(function (s) {
           const dn = s.day ? (DAYS.filter(function (d) { return d.id === s.day; })[0] || {}) : null;
           return '<div class="place photo-row">' +
-            '<button class="place-main" data-maplot="' + s.lat + ',' + s.lng + '">' +
+            '<button class="place-main" data-photo-open="' + esc(s.id) + '">' +
               '<span class="place-ic" style="--tint:#d03a2f;--tint-soft:#fdeceb">' + icon('camera') + '</span>' +
               '<span class="place-tx"><b>' + esc(s.name) + '</b><span>' +
                 esc([s.nameEn, s.best || (dn ? dn.dow : '')].filter(Boolean).join(' · ')) +
               '</span></span>' +
             '</button>' +
+            '<button class="photo-x" data-photo-map="' + esc(s.id) + '" aria-label="在地图查看">' +
+              icon('map') + '</button>' +
             '<button class="photo-x" data-photo-hide="' + esc(s.id) + '" aria-label="隐藏">' +
               icon('x') + '</button>' +
           '</div>';
@@ -1273,10 +1351,13 @@
     else renderChips();
   }
 
-  function editorRow(kind, index, title, sub) {
+  function editorRow(kind, index, title, sub, editAttr) {
     return '<div class="erow">' +
       '<span class="erow-tx"><b>' + esc(title) + '</b>' +
         (sub ? '<span>' + esc(sub) + '</span>' : '') + '</span>' +
+      (editAttr
+        ? '<button class="erow-edit" ' + editAttr + ' aria-label="编辑">' + icon('edit') + '</button>'
+        : '') +
       '<button class="ledger-del" data-rm="' + kind + ':' + index + '" aria-label="删除">' +
         icon('x') + '</button>' +
     '</div>';
@@ -1302,7 +1383,10 @@
     });
     const legRows = day.transport.map(function (t, i) {
       const route = t.to ? (t.from + ' → ' + t.to) : t.from;
-      return editorRow('t', i, route, [t.mode, t.duration, t.booked ? '已订 ' + t.booked : ''].filter(Boolean).join(' · '));
+      const bits = [t.mode, t.duration];
+      if (t.booked) bits.push('已订 ' + t.booked);
+      else if (t.time) bits.push(t.time);
+      return editorRow('t', i, route, bits.filter(Boolean).join(' · '), 'data-edit-leg="' + i + '"');
     });
     const placeRows = day.places.map(function (p, i) {
       return editorRow('p', i, p.name, [p.nameEn, p.note].filter(Boolean).join(' · '));
@@ -1344,6 +1428,8 @@
             return;
           }
           if (ev.target.closest('[data-add-place]')) { openPlaceSearch(dayIndex); return; }
+          const el = ev.target.closest('[data-edit-leg]');
+          if (el) { openLegEditor(dayIndex, Number(el.dataset.editLeg)); return; }
           if (ev.target.closest('[data-restore-day]')) {
             STORE.restoreHidden(day.id);
             refreshAfterEdit();
@@ -1531,23 +1617,57 @@
     })[0];
     if (hit) return { name: hit.name, lat: hit.lat, lng: hit.lng, stationId: hit.stationId || null };
     const h = hotelById(day.hotelId);
-    if (h && (h.name === t || h.city === t)) return { name: h.name, lat: h.lat, lng: h.lng };
+    if (h && (h.name === t || h.city === t)) return { name: t, lat: h.lat, lng: h.lng };
+    // a hotel that is merely touched by this day (checkout / check-in)
+    const other = HOTELS.filter(function (x) { return x.name === t || x.city === t; })[0];
+    if (other) return { name: t, lat: other.lat, lng: other.lng };
     return { name: t };
   }
 
+  /**
+   * Everything a transport leg on this day could plausibly start or end at:
+   * the hotels the day touches (a travel day often means checking out of one
+   * and into another, so both belong here) followed by the day's places.
+   */
+  function dayQuickRefs(day) {
+    const out = [];
+    const seen = {};
+    const push = function (name, kind, sub) {
+      const n = String(name || '').trim();
+      if (!n || seen[n]) return;
+      seen[n] = 1;
+      out.push({ name: n, kind: kind, sub: sub || '' });
+    };
+
+    const mmdd = day.date.slice(5);
+    const primary = day.hotelId ? HOTELS.filter(function (h) { return h.id === day.hotelId; }) : [];
+    const overlapping = HOTELS.filter(function (h) {
+      return h.checkIn && h.checkOut && h.checkIn <= mmdd && mmdd <= h.checkOut;
+    });
+    primary.concat(overlapping).forEach(function (h) { push(h.city || h.name, 'hotel', h.name); });
+    day.places.forEach(function (p) { push(p.name, 'place', p.nameEn || ''); });
+    return out;
+  }
+
+  /** one-tap fill chips; `attr` is the data-attribute the sheet listens for */
+  function quickChips(refs, attr, label) {
+    if (!refs.length) return '';
+    return '<div class="field"><label>' + esc(label) + '</label>' +
+      '<div class="chips-row">' + refs.map(function (r) {
+        return '<button class="chip' + (r.kind === 'hotel' ? ' chip-hotel' : '') + '" ' +
+          attr + '="' + esc(r.name) + '">' +
+          (r.kind === 'hotel' ? icon('bed') : '') + esc(r.name) + '</button>';
+      }).join('') + '</div></div>';
+  }
+
   function transportFormHtml(day) {
-    const places = day.places.map(function (p) { return p.name; });
-    const quick = places.length
-      ? '<div class="chips-row">' + places.map(function (n) {
-          return '<button class="chip" data-tp-set="' + esc(n) + '">' + esc(n) + '</button>';
-        }).join('') + '</div>'
-      : '';
+    const refs = dayQuickRefs(day);
 
     return '<div class="field"><label>起点</label>' +
         '<input id="tpFrom" type="text" placeholder="车站名或地点" autocomplete="off"></div>' +
       '<div class="field"><label>终点</label>' +
         '<input id="tpTo" type="text" placeholder="车站名或地点" autocomplete="off"></div>' +
-      (quick ? '<div class="field"><label>当天地点 · 点一下填入终点</label>' + quick + '</div>' : '') +
+      quickChips(refs, 'data-tp-set', '当天地点与酒店 · 点一下按顺序填入起点、终点') +
       '<div class="tp-when">' +
         '<div class="field" style="flex:1"><label>日期</label>' +
           '<input id="tpDate" type="date" value="' + day.date + '"></div>' +
@@ -1616,9 +1736,11 @@
         $('.sheet-inner').addEventListener('click', function (ev) {
           const chip = ev.target.closest('[data-tp-set]');
           if (chip) {
-            const cur = $('#tpTo').value.trim();
-            if (!cur) setTo(chip.dataset.tpSet);
-            else setFrom(chip.dataset.tpSet);
+            // fill the first empty end, then the other one; re-tap replaces 终点
+            const f = $('#tpFrom'), t = $('#tpTo');
+            if (!f.value.trim()) setFrom(chip.dataset.tpSet);
+            else if (!t.value.trim()) setTo(chip.dataset.tpSet);
+            else setTo(chip.dataset.tpSet);
             return;
           }
 
@@ -1642,7 +1764,9 @@
               mode: c.mode || '火车',
               duration: c.duration,
               note: c.lines.join(' → '),
-              booked: c.dep,
+              // a looked-up connection is a plan, not a booking — the traveller
+              // can confirm the booked time later from the leg editor
+              time: c.dep,
               detail: c.sections,
             });
             refreshAfterEdit();
@@ -1687,33 +1811,91 @@
       }, 'editor');
   }
 
+  /** the leg fields, shared by "add manually" and "edit this leg" */
+  function legFormHtml(day, leg) {
+    const l = leg || {};
+    return '<div class="field"><label>起点</label>' +
+        '<input id="mlFrom" type="text" placeholder="例如 酒店" value="' + esc(l.from || '') + '"></div>' +
+      '<div class="field"><label>终点</label>' +
+        '<input id="mlTo" type="text" placeholder="例如 缆车站" value="' + esc(l.to || '') + '"></div>' +
+      quickChips(dayQuickRefs(day), 'data-leg-set', '当天地点与酒店 · 点一下按顺序填入') +
+      '<div class="field"><label>方式</label>' +
+        '<input id="mlMode" type="text" placeholder="例如 步行 / 缆车 / 出租车" value="' + esc(l.mode || '') + '"></div>' +
+      '<div class="field"><label>耗时</label>' +
+        '<input id="mlDur" type="text" placeholder="例如 约 15 分钟" value="' + esc(l.duration || '') + '"></div>' +
+      '<div class="tp-when">' +
+        '<div class="field" style="flex:1"><label>计划时间（可选）</label>' +
+          '<input id="mlTime" type="time" value="' + esc(l.time || '') + '"></div>' +
+        '<div class="field" style="flex:1"><label>已订发车（可选）</label>' +
+          '<input id="mlBooked" type="time" value="' + esc(l.booked || '') + '"></div>' +
+      '</div>' +
+      '<div class="hint">填了时间，「按发车时间排」才有依据。</div>' +
+      '<div class="field"><label>备注（可选）</label>' +
+        '<input id="mlNote" type="text" placeholder="例如 需提前买票" value="' + esc(l.note || '') + '"></div>';
+  }
+
+  /** chips in the leg form fill 起点 then 终点 */
+  function wireLegChips(root) {
+    root.addEventListener('click', function (ev) {
+      const chip = ev.target.closest('[data-leg-set]');
+      if (!chip) return;
+      const f = $('#mlFrom'), t = $('#mlTo');
+      if (!f.value.trim()) f.value = chip.dataset.legSet;
+      else t.value = chip.dataset.legSet;
+    });
+  }
+
+  function legFormValues() {
+    return {
+      from: $('#mlFrom').value.trim(),
+      to: $('#mlTo').value.trim(),
+      mode: $('#mlMode').value.trim(),
+      duration: $('#mlDur').value.trim(),
+      note: $('#mlNote').value.trim(),
+      time: $('#mlTime').value || null,
+      booked: $('#mlBooked').value || null,
+    };
+  }
+
   function openManualLeg(dayIndex) {
     const day = DAYS[dayIndex];
     openSheet('手动添加交通', day.dow + ' · ' + day.title,
-      '<div class="field"><label>起点</label><input id="mlFrom" type="text" placeholder="例如 酒店"></div>' +
-      '<div class="field"><label>终点</label><input id="mlTo" type="text" placeholder="例如 缆车站"></div>' +
-      '<div class="field"><label>方式</label><input id="mlMode" type="text" placeholder="例如 步行 / 缆车 / 出租车"></div>' +
-      '<div class="field"><label>耗时</label><input id="mlDur" type="text" placeholder="例如 约 15 分钟"></div>' +
-      '<div class="field"><label>已订发车时间（可选）</label>' +
-        '<input id="mlBooked" type="time" value=""></div>' +
-      '<div class="field"><label>备注（可选）</label><input id="mlNote" type="text" placeholder="例如 需提前买票"></div>' +
+      legFormHtml(day, null) +
       '<button class="btn block primary" id="mlSave" style="height:46px">' + icon('check') + '保存</button>',
       function () {
+        const inner = $('.sheet-inner');
+        wireLegChips(inner);
         $('#mlFrom').focus();
         $('#mlSave').addEventListener('click', function () {
-          const from = $('#mlFrom').value.trim();
-          const to = $('#mlTo').value.trim();
-          if (!from && !to) { toast('请填写起点或终点'); return; }
-          STORE.addLeg(day.id, {
-            from: from, to: to,
-            mode: $('#mlMode').value.trim(),
-            duration: $('#mlDur').value.trim(),
-            note: $('#mlNote').value.trim(),
-            booked: $('#mlBooked').value || null,
-          });
+          const v = legFormValues();
+          if (!v.from && !v.to) { toast('请填写起点或终点'); return; }
+          STORE.addLeg(day.id, v);
           refreshAfterEdit();
           openDayEditor(dayIndex);
           toast('已添加');
+        });
+      }, 'editor');
+  }
+
+  /** edit an existing leg — a base leg is hidden and replaced by an edited copy */
+  function openLegEditor(dayIndex, legIndex) {
+    const day = DAYS[dayIndex];
+    const leg = day.transport[legIndex];
+    if (!leg) return;
+
+    openSheet('编辑交通', day.dow + ' · ' + day.title,
+      legFormHtml(day, leg) +
+      '<button class="btn block primary" id="mlSave" style="height:46px">' + icon('check') + '保存修改</button>',
+      function () {
+        const inner = $('.sheet-inner');
+        wireLegChips(inner);
+        $('#mlSave').addEventListener('click', function () {
+          const v = legFormValues();
+          if (!v.from && !v.to) { toast('请填写起点或终点'); return; }
+          STORE.updateLeg(day.id, legIndex, v);
+          refreshAfterEdit();
+          openDayEditor(dayIndex);
+          toast('已保存');
         });
       }, 'editor');
   }
@@ -1835,7 +2017,9 @@
             (tr.busy ? ' disabled' : '') + '>' +
             (tr.busy ? '翻译中…' : icon('globe') + '翻译') + '</button>' +
           (tr.result ? '<div class="tr-out"><b>' + esc(tr.result.text) + '</b>' +
-            '<span>由 ' + esc(tr.result.engine) + ' 提供</span></div>' : '') +
+            '<div class="tr-out-foot"><span>由 ' + esc(tr.result.engine) + ' 提供</span>' +
+              '<button class="tr-say wide" data-say-result="1" data-say-lang="' + tr.to + '">' +
+                icon('speak') + '朗读</button></div></div>' : '') +
           (tr.error ? '<div class="tr-err">' + esc(tr.error) +
             '<div class="btn-row" style="margin-top:10px">' +
               '<a class="btn sm ghost" target="_blank" rel="noopener" href="' +
@@ -1866,11 +2050,15 @@
           }).join('') + '</div>') +
         '<div class="tr-list">' +
           (list.length ? list.map(function (p, i) {
-            return '<button class="tr-phrase" data-tr-big="' + i + '">' +
-              '<span class="tr-zh">' + esc(p.zh) + '</span>' +
-              '<span class="tr-en">' + esc(p.en) + '</span>' +
-              '<span class="tr-de">' + esc(p.de) + '</span>' +
-            '</button>';
+            return '<div class="tr-phrase" data-tr-big="' + i + '" role="button" tabindex="0">' +
+              '<span class="tr-tx">' +
+                '<span class="tr-zh">' + esc(p.zh) + '</span>' +
+                '<span class="tr-en">' + esc(p.en) + '</span>' +
+                '<span class="tr-de">' + esc(p.de) + '</span>' +
+              '</span>' +
+              '<button class="tr-say" data-say-phrase="' + i + '" data-say-lang="' + tr.to + '" ' +
+                'aria-label="朗读' + esc(langLabel(tr.to)) + '">' + icon('speak') + '</button>' +
+            '</div>';
           }).join('') : '<div class="empty">没有匹配的短语</div>') +
         '</div>' +
       '</div>' +
@@ -1896,6 +2084,64 @@
     const i = LANGS.map(function (l) { return l.id; }).indexOf(id);
     const n = ((i < 0 ? 0 : i) + (dir || 1) + LANGS.length) % LANGS.length;
     return LANGS[n].id;
+  }
+
+  /* ---- speech playback ----------------------------------------------- */
+  /* Web Speech API: built into the browser, no key, no network. Which voices
+     exist varies a lot by device, so nothing here is assumed — if there is no
+     matching voice we still hand the text to the engine with just a lang tag,
+     and if the API is missing altogether we say so instead of failing quietly. */
+  const TTS_LANG = { zh: 'zh-CN', en: 'en-US', de: 'de-DE' };
+  let ttsVoices = [];
+
+  function ttsSupported() {
+    return typeof speechSynthesis !== 'undefined' &&
+      typeof SpeechSynthesisUtterance !== 'undefined';
+  }
+
+  function ttsRefresh() {
+    if (!ttsSupported()) return;
+    try { ttsVoices = speechSynthesis.getVoices() || []; } catch (e) { ttsVoices = []; }
+  }
+
+  function ttsPick(langId) {
+    const want = String(TTS_LANG[langId] || 'en-US').toLowerCase();
+    const base = want.slice(0, 2);
+    const norm = function (v) { return String(v.lang || '').toLowerCase().replace('_', '-'); };
+    const exact = ttsVoices.filter(function (v) { return norm(v) === want; });
+    const loose = ttsVoices.filter(function (v) { return norm(v).indexOf(base) === 0; });
+    const pool = exact.length ? exact : loose;
+    if (!pool.length) return null;
+    // a local voice keeps working in a valley with no signal
+    return pool.filter(function (v) { return v.localService; })[0] || pool[0];
+  }
+
+  /** true if something was actually spoken */
+  function speak(text, langId) {
+    const t = String(text == null ? '' : text).trim();
+    if (!t) return false;
+    if (!ttsSupported()) { toast('这台设备不支持语音朗读'); return false; }
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(t);
+      const v = ttsPick(langId);
+      if (v) u.voice = v;
+      u.lang = v ? v.lang : (TTS_LANG[langId] || 'en-US');
+      u.rate = 0.88;          // slower than native: the point is to be understood
+      u.pitch = 1;
+      speechSynthesis.speak(u);
+      return true;
+    } catch (e) {
+      toast('朗读失败');
+      return false;
+    }
+  }
+
+  /** one phrase in one language, by index into the currently rendered list */
+  function speakPhrase(index, langId) {
+    const p = trList[index];
+    if (!p) return;
+    speak(langId === 'zh' ? p.zh : langId === 'de' ? p.de : p.en, langId);
   }
 
   /* ---- add a photo spot ---------------------------------------------- */
@@ -2034,14 +2280,18 @@
   function openPhrase(idx) {
     const p = trList[idx];
     if (!p) return;
-    const row = function (label, text, cls) {
-      return '<div class="big-line ' + cls + '"><span class="big-lang">' + label + '</span>' +
-        '<b>' + esc(text) + '</b></div>';
+    const row = function (label, text, cls, langId) {
+      return '<div class="big-line ' + cls + '">' +
+        '<span class="big-lang">' + label + '</span>' +
+        '<b>' + esc(text) + '</b>' +
+        '<button class="big-say" data-say-phrase="' + idx + '" data-say-lang="' + langId + '" ' +
+          'aria-label="朗读' + label + '">' + icon('speak') + '</button>' +
+      '</div>';
     };
     openSheet('给对方看', p.group ? p.group.label : '短语',
-      row('中文', p.zh, 'zh') + row('English', p.en, 'en') + row('Deutsch', p.de, 'de') +
+      row('中文', p.zh, 'zh', 'zh') + row('English', p.en, 'en', 'en') + row('Deutsch', p.de, 'de', 'de') +
       '<div style="margin-top:14px;font-size:11.5px;line-height:1.6;color:var(--muted)">' +
-        '把手机转过去给对方看即可，不需要联网。' +
+        '把手机转过去给对方看即可，不需要联网。点右边的喇叭可以读出来。' +
       '</div>', null, 'phrase');
   }
 
@@ -2065,13 +2315,15 @@
   }
 
   function sortBarHtml(dayId, kind) {
-    const auto = STORE.sortMode(dayId) === 'auto';
+    const auto = STORE.sortMode(dayId, kind) === 'auto';
+    const label = kind === 't' ? '按发车时间排'
+      : kind === 'p' ? '按行程时间排' : '按时间排序';
     return '<div class="sortbar">' +
       '<span class="sortbar-tx">' +
         icon('sort') + '排序模式 · 用 ↑↓ 调整' +
       '</span>' +
-      (kind === 'b' && !auto
-        ? '<button class="btn sm ghost" data-sort-auto="1">按时间排序</button>'
+      (!auto
+        ? '<button class="btn sm ghost" data-sort-auto="1">' + label + '</button>'
         : '') +
       '<button class="btn sm primary" data-sort-done="1">完成</button>' +
     '</div>';
@@ -2466,7 +2718,7 @@
       // normal action. The click that the browser fires when the finger lifts can
       // land on a re-rendered row, which would otherwise pop a sheet over the
       // sort UI. Only the sort controls stay live.
-      if (state.sorting && t.closest('#tlList, #placeList') &&
+      if (state.sorting && t.closest('#tlList, #placeList, #legList') &&
           !t.closest('[data-move-kind], [data-sort-done], [data-sort-auto]')) {
         return;
       }
@@ -2671,7 +2923,7 @@
 
       const sa = t.closest('[data-sort-auto]');
       if (sa && state.sorting) {
-        STORE.setSortMode(state.sorting.dayId, 'auto');
+        STORE.setSortMode(state.sorting.dayId, state.sorting.kind, 'auto');
         state.sorting = null;
         renderToday();
         toast('已改回按时间排序');
@@ -2702,14 +2954,50 @@
         })[0];
         STORE.removePhotoSpot(ph.dataset.photoHide);
         if (map) map.closePopup();
+        closeSheet();
         renderMapContent();
         toast(wasUser && wasUser._user ? '已删除' : '已隐藏，可点「恢复」找回');
+        return;
+      }
+
+      const pOpen = t.closest('[data-photo-open]');
+      if (pOpen) {
+        const s = photoById(pOpen.dataset.photoOpen);
+        if (s) photoSheet(s);
+        return;
+      }
+
+      const pCopy = t.closest('[data-photo-copy]');
+      if (pCopy) {
+        const s = photoById(pCopy.dataset.photoCopy);
+        if (s) copyPhotoAddress(s);
+        return;
+      }
+
+      const pMap = t.closest('[data-photo-map]');
+      if (pMap) {
+        const s = photoById(pMap.dataset.photoMap);
+        if (!s) return;
+        const di = DAYS.map(function (d) { return d.id; }).indexOf(s.day);
+        closeSheet();
+        if (di >= 0) state.mapFilter = String(di);
+        setView('map');
+        setTimeout(function () {
+          if (map) map.setView([s.lat, s.lng], 15, { animate: true });
+          renderMapContent();
+        }, 240);
         return;
       }
 
       /* ---- translation ----------------------------------------------- */
       const tg = t.closest('[data-tr-group]');
       if (tg) { tr.group = tg.dataset.trGroup; tr.q = ''; renderTranslate(); return; }
+      // speech first: the speaker sits inside a phrase row, so the row's own
+      // handler must not also fire
+      const sy = t.closest('[data-say-phrase]');
+      if (sy) { speakPhrase(Number(sy.dataset.sayPhrase), sy.dataset.sayLang); return; }
+      const sr = t.closest('[data-say-result]');
+      if (sr) { if (tr.result) speak(tr.result.text, sr.dataset.sayLang); return; }
       const tb = t.closest('[data-tr-big]');
       if (tb) { openPhrase(Number(tb.dataset.trBig)); return; }
       const ts = t.closest('[data-tr-swap]');
@@ -2759,12 +3047,7 @@
       }
 
       const cp = t.closest('[data-copy]');
-      if (cp) {
-        const txt = cp.dataset.copy;
-        if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => toast('已复制'), () => toast('复制失败'));
-        else toast(txt);
-        return;
-      }
+      if (cp) { copyText(cp.dataset.copy); return; }
 
       const eb = t.closest('[data-edit-budget]');
       if (eb) {
@@ -2987,6 +3270,13 @@
     bind();
     tickClock();
     setInterval(tickClock, 20000);
+
+    // speech voices arrive asynchronously on most browsers
+    ttsRefresh();
+    if (ttsSupported()) {
+      try { speechSynthesis.addEventListener('voiceschanged', ttsRefresh); }
+      catch (e) { try { speechSynthesis.onvoiceschanged = ttsRefresh; } catch (e2) {} }
+    }
 
     // header subtitle
     const st = tripStatus();

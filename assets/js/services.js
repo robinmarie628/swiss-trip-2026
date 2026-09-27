@@ -175,6 +175,38 @@
     return out;
   }
 
+  /**
+   * Coordinates → a human-readable address. Used when the traveller copies the
+   * address of a photo spot: the curated spots only carry coordinates.
+   * Nominatim allows light on-demand use like this; the caller caches the result.
+   */
+  async function reverseGeocode(lat, lng) {
+    if (lat == null || lng == null) throw new Error('缺少坐标');
+    const json = await get('https://nominatim.openstreetmap.org/reverse?lat=' +
+      encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lng) +
+      '&format=jsonv2&zoom=18&addressdetails=1&accept-language=zh',
+      { tries: 1, timeout: 7000 });
+
+    const a = json.address || {};
+    // Swiss addresses read "Street 12, 1207 Town" — and for a landmark the name
+    // itself is the most useful part, so it leads.
+    const street = [a.road || a.pedestrian || a.footway || a.path || a.square,
+      a.house_number].filter(Boolean).join(' ');
+    const town = a.city || a.town || a.village || a.municipality || a.suburb || a.county;
+    const poi = json.name || a.amenity || a.tourism || a.building || '';
+
+    const parts = [];
+    if (poi && poi !== street) parts.push(poi);
+    if (street) parts.push(street);
+    const tail = [a.postcode, town].filter(Boolean).join(' ');
+    if (tail) parts.push(tail);
+    if (a.country) parts.push(a.country);
+
+    const out = parts.length ? parts.join(', ') : (json.display_name || '');
+    if (!out) throw new Error('没有查到地址');
+    return out;
+  }
+
   /* ======================== connections =============================== */
   function endpointOf(ref) {
     if (!ref) return '';
@@ -323,6 +355,7 @@
     searchPlaces: searchPlaces,
     searchPlacesStreaming: searchPlacesStreaming,
     searchStations: searchStations,
+    reverseGeocode: reverseGeocode,
     connections: connections,
     fx: fx,
     fmtMinutes: fmtMinutes,

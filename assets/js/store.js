@@ -20,13 +20,15 @@
       version: 1,
       places: {},        // dayId -> [place]
       legs: {},          // dayId -> [leg]
+      legEdits: {},      // dayId -> { legKey: {patch} } — edits to base legs
       blocks: {},        // dayId -> [block]
       hidden: {},        // dayId -> [key]
       photoSpots: [],    // user-added photo spots
       hiddenPhotos: [],  // curated photo-spot ids the user hid
       photoVisible: true,
       order: {},         // dayId -> { b: [key], p: [key], t: [key] }
-      sortMode: {},      // dayId -> 'auto' | 'manual'
+      sortMode: {},      // dayId -> { b|p|t: 'manual' }  (absent => 'auto')
+      geoCache: {},      // 'lat,lng' -> reverse-geocoded address
       presets: null,     // null => fall back to EXPENSE_PRESETS
       budget: null,
       rates: null,       // { cny, eur, date, source, at }
@@ -38,9 +40,15 @@
   const subs = [];
 
   /* ---------- stable keys for hiding base items ---------------------- */
+  /** a transport leg's identity — mode is part of it, so two legs between the
+      same two places (train + walk) stay separately addressable */
+  function legKey(item) {
+    return String(item.from || '') + '→' + String(item.to || '') + '|' + String(item.mode || '');
+  }
+
   function keyOf(kind, item) {
     if (kind === 'p') return String(item.name);
-    if (kind === 't') return String(item.from) + '→' + String(item.to) + '|' + String(item.mode || '');
+    if (kind === 't') return legKey(item);
     return String(item.time) + '|' + String(item.label);
   }
 
@@ -63,9 +71,10 @@
       if (raw) {
         const parsed = JSON.parse(raw);
         data = Object.assign(blank(), parsed || {});
-        ['places', 'legs', 'blocks', 'hidden', 'order', 'sortMode'].forEach(function (k) {
-          if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {};
-        });
+        ['places', 'legs', 'blocks', 'hidden', 'order', 'sortMode', 'geoCache', 'legEdits']
+          .forEach(function (k) {
+            if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {};
+          });
         ['photoSpots', 'hiddenPhotos'].forEach(function (k) {
           if (!Array.isArray(data[k])) data[k] = [];
         });
@@ -123,6 +132,51 @@
     });
   }
 
+  /**
+   * Sort by an explicit rank, but let un-ranked items *float* rather than sink.
+   *
+   * This is what makes transport sortable: only booked legs carry a departure
+   * time, so a plain time sort would push every walk to the bottom — on day 4
+   * that would move "walk to the falls" below the 10:30 train it precedes.
+   * An un-ranked item instead inherits the rank of the last timed item before
+   * it (plus a tiny nudge), so it stays in the phase it belongs to.
+   */
+  function anchorSort(list, rankOf) {
+    let last = null, nudge = 0;
+    const keyed = list.map(function (x, i) {
+      const r = rankOf(x);
+      if (r != null) { last = r; nudge = 0; return { x: x, i: i, k: r }; }
+      nudge += 1;
+      return { x: x, i: i, k: (last == null ? -1 : last) + nudge / 1000 };
+    });
+    keyed.sort(function (a, b) { return a.k !== b.k ? a.k - b.k : a.i - b.i; });
+    return keyed.map(function (o) { return o.x; });
+  }
+
+  /** a leg's own clock time — a booked departure wins over a planned one */
+  function legRank(l) {
+    return timeRank(l.booked || l.time || '');
+  }
+
+  /**
+   * A place has no time of its own, so borrow one from the timeline entry that
+   * mentions it — that is what "sort the places by time" has to mean.
+   */
+  function placeRank(p, blocks) {
+    const names = [p.name, p.nameEn].filter(Boolean);
+    if (!names.length) return null;
+    let best = null;
+    (blocks || []).forEach(function (b) {
+      const hay = String(b.label || '') + ' ' + String(b.text || '');
+      const hit = names.some(function (n) { return hay.indexOf(n) >= 0; });
+      if (!hit) return;
+      const r = timeRank(b.time);
+      if (r == null) return;
+      if (best == null || r < best) best = r;
+    });
+    return best;
+  }
+
   function resolved(i) {
     snapshot();
     const d = DAYS[i];
@@ -142,32 +196,65 @@
     };
 
     let blocks = b.blocks.filter(keep('b')).concat(add('blocks', 'b'));
-    const places = applyOrder(b.places.filter(keep('p')).concat(add('places', 'p')), ord.p,
-      function (x) { return x.name; });
-    const transport = applyOrder(b.transport.filter(keep('t')).concat(add('legs', 't')), ord.t,
-      function (x) { return x.from + '→' + x.to; });
+    let places = b.places.filter(keep('p')).concat(add('places', 'p'));
+
+    // A base leg is never mutated: edits to it are stored as a patch and applied
+    // in place, so the leg keeps its slot in the list. (Hiding it and appending a
+    // copy would lose that slot, and the legs around it would re-sort wrongly.)
+    // `_baseKey` records the leg's original identity, because an edit can change
+    // its from/to/mode — later edits and deletes must still address the original.
+    const edits = data.legEdits[id] || {};
+    let transport = b.transport.filter(keep('t')).map(function (l) {
+      const k = legKey(l);
+      const e = edits[k];
+      return Object.assign({}, l, e || {}, { _baseKey: k });
+    }).concat(add('legs', 't'));
 
     // timeline: auto by clock/period unless the traveller has dragged it
-    if (sortMode(id) === 'manual') {
-      blocks = applyOrder(blocks, ord.b, function (x) { return x.time + '|' + x.label; });
-    } else {
-      blocks = autoSortByTime(blocks);
-    }
+    blocks = modeOf(id, 'b') === 'manual'
+      ? applyOrder(blocks, ord.b, function (x) { return x.time + '|' + x.label; })
+      : autoSortByTime(blocks);
+
+    // transport: auto by departure time unless dragged
+    transport = modeOf(id, 't') === 'manual'
+      ? applyOrder(transport, ord.t, legKey)
+      : anchorSort(transport, legRank);
+
+    // places: auto by the time of the timeline entry that mentions them
+    places = modeOf(id, 'p') === 'manual'
+      ? applyOrder(places, ord.p, function (x) { return x.name; })
+      : anchorSort(places, function (p) { return placeRank(p, blocks); });
 
     return { places: places, transport: transport, blocks: blocks };
   }
 
-  function sortMode(dayId) {
-    return data.sortMode[dayId] === 'manual' ? 'manual' : 'auto';
+  /* ---------- sort mode, per kind ------------------------------------- */
+  function modeOf(dayId, kind) {
+    const v = data.sortMode[dayId];
+    // legacy shape: a bare 'manual' string meant "the timeline was dragged"
+    if (v === 'manual') return kind === 'b' ? 'manual' : 'auto';
+    if (v && typeof v === 'object') return v[kind] === 'manual' ? 'manual' : 'auto';
+    return 'auto';
   }
 
-  function setSortMode(dayId, mode) {
-    if (mode === 'auto') {
-      delete data.sortMode[dayId];
-      if (data.order[dayId]) delete data.order[dayId].b;
-    } else {
-      data.sortMode[dayId] = 'manual';
-    }
+  function sortMode(dayId, kind) {
+    return modeOf(dayId, kind || 'b');
+  }
+
+  function modeObject(dayId) {
+    const v = data.sortMode[dayId];
+    if (v && typeof v === 'object') return Object.assign({}, v);
+    return v === 'manual' ? { b: 'manual' } : {};
+  }
+
+  function setSortMode(dayId, kind, mode) {
+    const k = kind || 'b';
+    const obj = modeObject(dayId);
+    if (mode === 'manual') obj[k] = 'manual'; else delete obj[k];
+    if (Object.keys(obj).length) data.sortMode[dayId] = obj;
+    else delete data.sortMode[dayId];
+    // dropping back to auto throws away that list's manual order
+    if (mode !== 'manual' && data.order[dayId]) delete data.order[dayId][k];
     save();
   }
 
@@ -175,7 +262,10 @@
   function setOrder(dayId, kind, keys) {
     if (!data.order[dayId]) data.order[dayId] = {};
     data.order[dayId][kind] = keys.slice();
-    if (kind === 'b') data.sortMode[dayId] = 'manual';
+    // dragging a list pins just that list: it stops following the clock
+    const obj = modeObject(dayId);
+    obj[kind] = 'manual';
+    data.sortMode[dayId] = obj;
     save();
   }
 
@@ -191,7 +281,9 @@
     const r = resolved(i);
     const list = kind === 'p' ? r.places : kind === 't' ? r.transport : r.blocks;
     return list.map(function (x) {
-      return kind === 'p' ? x.name : kind === 't' ? (x.from + '→' + x.to) : (x.time + '|' + x.label);
+      if (kind === 'p') return x.name;
+      if (kind === 't') return legKey(x);
+      return x.time + '|' + x.label;
     });
   }
 
@@ -232,10 +324,53 @@
       mode: leg.mode || '',
       duration: leg.duration || '',
       note: leg.note || '',
+      time: leg.time || null,
       booked: leg.booked || null,
       detail: leg.detail || null,
     });
     save();
+  }
+
+  /**
+   * Edit a leg in place. User-added legs are patched directly; a leg from
+   * data.js is immutable, so the change is kept as a patch keyed by the leg's
+   * original identity and re-applied on every merge.
+   */
+  function updateLeg(dayId, index, patch) {
+    const day = DAYS.filter(function (d) { return d.id === dayId; })[0];
+    const item = day && day.transport[index];
+    if (!item) return false;
+
+    // for a base leg this is the original identity, which an edit may have changed
+    const oldKey = item._baseKey || legKey(item);
+    const clean = {};
+    Object.keys(patch || {}).forEach(function (k) {
+      if (k.charAt(0) !== '_') clean[k] = patch[k];
+    });
+
+    if (item._user) {
+      const arr = data.legs[dayId] || [];
+      const i = arr.map(legKey).indexOf(legKey(item));
+      if (i < 0) return false;
+      arr[i] = Object.assign({}, arr[i], clean);
+    } else {
+      if (!data.legEdits[dayId]) data.legEdits[dayId] = {};
+      // a second edit folds into the stored patch instead of stacking a new one
+      const prev = data.legEdits[dayId][oldKey];
+      data.legEdits[dayId][oldKey] = Object.assign({}, prev || {}, clean);
+    }
+
+    // keep a manual order pointing at the right leg when its identity changes
+    const nextKey = legKey(Object.assign({}, item, clean));
+    if (nextKey !== oldKey) {
+      const ord = data.order[dayId] && data.order[dayId].t;
+      if (ord) {
+        const j = ord.indexOf(oldKey);
+        if (j >= 0) ord[j] = nextKey;
+      }
+    }
+    save();
+    return true;
   }
 
   function addBlock(dayId, block) {
@@ -258,18 +393,21 @@
     if (item._user) {
       const bucketName = kind === 'p' ? 'places' : kind === 't' ? 'legs' : 'blocks';
       const arr = data[bucketName][dayId] || [];
-      const key = kind === 'p' ? item.name : kind === 't' ? (item.from + '→' + item.to) : (item.time + '|' + item.text);
+      const key = kind === 'p' ? item.name : kind === 't' ? legKey(item) : (item.time + '|' + item.text);
       const idx = arr.findIndex(function (x) {
         if (kind === 'p') return x.name === item.name;
-        if (kind === 't') return (x.from + '→' + x.to) === (item.from + '→' + item.to);
+        if (kind === 't') return legKey(x) === legKey(item);
         return (x.time + '|' + x.text) === (item.time + '|' + item.text);
       });
       if (idx >= 0) arr.splice(idx, 1);
       void key;
     } else {
       if (!data.hidden[dayId]) data.hidden[dayId] = [];
-      const k = keyOf(kind, item);
+      // a base leg is hidden by its *original* key, which an edit may have changed
+      const k = kind === 't' ? (item._baseKey || keyOf(kind, item)) : keyOf(kind, item);
       if (data.hidden[dayId].indexOf(k) < 0) data.hidden[dayId].push(k);
+      // a hidden leg no longer needs its edit patch
+      if (kind === 't' && data.legEdits[dayId]) delete data.legEdits[dayId][k];
     }
     save();
   }
@@ -373,6 +511,20 @@
   function photosVisible() { return data.photoVisible !== false; }
   function hiddenPhotoCount() { return data.hiddenPhotos.length; }
 
+  /* ---------- reverse-geocode cache ----------------------------------- */
+  /* Photo spots carry coordinates, not a street address. The address is
+     resolved once from Nominatim and kept, so copying it again is instant and
+     still works with no connection. */
+  function cachedAddress(lat, lng) {
+    return data.geoCache[lat + ',' + lng] || null;
+  }
+
+  function setAddress(lat, lng, text) {
+    if (!text) return;
+    data.geoCache[lat + ',' + lng] = text;
+    save(true);                       // silent: this is a cache, not an edit
+  }
+
   /* ---------- backup -------------------------------------------------- */
   function exportJson() {
     return JSON.stringify({
@@ -413,15 +565,19 @@
     load: load, save: save, onChange: onChange,
     resolved: resolved, apply: apply,
     addPlace: addPlace, addLeg: addLeg, addBlock: addBlock,
+    updateLeg: updateLeg,
     remove: remove, restoreHidden: restoreHidden,
     presets: presets, setPresets: setPresets, updatePreset: updatePreset,
     addPreset: addPreset, removePreset: removePreset, resetPresets: resetPresets,
     budget: budget, setBudget: setBudget, rates: rates, setRates: setRates,
     exportJson: exportJson, importJson: importJson, resetAll: resetAll,
-    stats: stats, keyOf: keyOf,
+    stats: stats, keyOf: keyOf, legKey: legKey,
     /* ordering */
     timeRank: timeRank, sortMode: sortMode, setSortMode: setSortMode,
     setOrder: setOrder, clearOrder: clearOrder, orderKeys: orderKeys,
+    anchorSort: anchorSort, legRank: legRank, placeRank: placeRank,
+    /* reverse-geocode cache */
+    cachedAddress: cachedAddress, setAddress: setAddress,
     /* photo spots */
     allPhotoSpots: allPhotoSpots, photoSpotsForDay: photoSpotsForDay,
     addPhotoSpot: addPhotoSpot, removePhotoSpot: removePhotoSpot,
