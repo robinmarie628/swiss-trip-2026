@@ -226,10 +226,128 @@
     })[0];
   }
 
-  /** navigate the pre-opened tab (or the current one) to the SBB deep link */
-  function openSbb(win, fromSt, toSt) {
-    const u = sbbUrl(fromSt, toSt);
-    if (win) win.location.href = u; else window.location.href = u;
+  /** key a planned route by the 起点/终点 pair it was computed for */
+  function sbbRouteKey(fv, tv) { return fv + '\u0001' + tv; }
+
+  /**
+   * Work out which stations to hand SBB for a pair of endpoints.
+   *
+   * Planned ahead of the tap (see primeSbbRoute) so the button can open the SBB
+   * app *synchronously*. An async window.open gets popup-blocked on mobile, and
+   * the old "blank tab, then redirect it" workaround left the traveller stranded
+   * on a loading page instead of back on this sheet — the tab never came back.
+   *
+   * kind: 'route'   engine found a connection → board/alight stops
+   *       'direct'  both endpoints are already station names
+   *       'walk'    the engine found nothing to ride
+   *       'same'    both endpoints resolve to one stop
+   *       'nearest' engine unreachable → nearest stop to each endpoint
+   */
+  function planSbbRoute(day, fv, tv) {
+    const key = sbbRouteKey(fv, tv);
+    const fr = resolveRef(fv);
+    const tr = resolveRef(tv);
+    const needsEngine = (fr && fr.lat != null) || (tr && tr.lat != null);
+    if (!needsEngine) {
+      return Promise.resolve({ key: key, kind: 'direct', from: sbbLabel(fr), to: sbbLabel(tr) });
+    }
+    return SERVICES.connections({
+      from: fr, to: tr,
+      date: ($('#tpDate') && $('#tpDate').value) || day.date,
+      time: ($('#tpTime') && $('#tpTime').value) || '08:00',
+      limit: 5,
+    }).then(function (list) {
+      const best = pickBestConnection(list);
+      const rides = best.sections.filter(function (s) { return s.kind === 'ride'; });
+      if (!rides.length) return { key: key, kind: 'walk' };
+      return {
+        key: key, kind: 'route',
+        board: rides[0].from,
+        alight: rides[rides.length - 1].to,
+        line: rides.map(function (r) { return (r.cat + ' ' + r.num).trim(); }).join(' + '),
+        duration: best.duration || '',
+      };
+    }).catch(function () {
+      // engine unreachable — fall back to each endpoint's nearest stop
+      return Promise.all([toStation(fr), toStation(tr)]).then(function (res) {
+        const fs = res[0], ts = res[1];
+        if (!fs || !fs.name || !ts || !ts.name) throw new Error('没能解析到车站');
+        if (fs.name === ts.name) return { key: key, kind: 'same', stop: fs.name };
+        return { key: key, kind: 'nearest', from: fs.name, to: ts.name };
+      });
+    });
+  }
+
+  /**
+   * Open the planned route. Uses a new tab so this sheet stays exactly where it
+   * is — the traveller lands back on their 起点/终点 when they leave the SBB app.
+   */
+  function openRoute(r) {
+    const info = $('#tpSbbInfo');
+    const setInfo = function (t) {
+      if (!info) return;
+      info.textContent = t || '';
+      info.style.display = t ? 'block' : 'none';
+    };
+    if (r.kind === 'walk') {
+      setInfo('这段距离很近，步行即可');
+      toast('这段距离很近，步行即可，无需乘车');
+      return;
+    }
+    if (r.kind === 'same') {
+      setInfo('起点与终点是同一车站：' + r.stop);
+      toast('起点与终点是同一车站（' + r.stop + '），这段不需要乘车');
+      return;
+    }
+    let u, msg, text;
+    if (r.kind === 'route') {
+      u = sbbUrl({ name: r.board }, { name: r.alight });
+      text = '最优路线 ' + r.line + '：' + r.board + ' 上车 → ' + r.alight + ' 下车（约 ' + r.duration + '）';
+      msg = '已按最优路线 ' + r.line + '：' + r.board + ' → ' + r.alight;
+    } else if (r.kind === 'nearest') {
+      u = sbbUrl({ name: r.from }, { name: r.to });
+      text = '最近车站：' + r.from + ' → ' + r.to;
+      msg = '已换成最近车站：' + r.from + ' → ' + r.to;
+    } else {
+      u = sbbUrl({ name: r.from }, { name: r.to });
+      text = 'SBB 路线：' + r.from + ' → ' + r.to;
+      msg = '已打开 SBB：' + r.from + ' → ' + r.to;
+    }
+    setInfo(text);
+    const w = window.open(u, '_blank', 'noopener');
+    if (!w) window.location.href = u;
+    toast(msg);
+  }
+
+  /** resolve the route ahead of the tap so openRoute() can stay synchronous */
+  function primeSbbRoute(day) {
+    const fe = $('#tpFrom');
+    const te = $('#tpTo');
+    const fv = fe ? fe.value.trim() : '';
+    const tv = te ? te.value.trim() : '';
+    if (!fv || !tv) return;
+    if (tpRoute && tpRoute.key === sbbRouteKey(fv, tv)) return;
+    planSbbRoute(day, fv, tv).then(function (r) {
+      const cf = $('#tpFrom') ? $('#tpFrom').value.trim() : '';
+      const ct = $('#tpTo') ? $('#tpTo').value.trim() : '';
+      if (sbbRouteKey(cf, ct) === r.key) tpRoute = r;
+    }).catch(function () { /* the click handler retries with a spinner */ });
+  }
+
+  function schedulePrimeSbb(day) {
+    if (tpRouteTimer) clearTimeout(tpRouteTimer);
+    tpRouteTimer = setTimeout(function () { primeSbbRoute(day); }, 500);
+  }
+
+  /** the connection list renders below the fold — bring it into view so a tap
+      visibly does something instead of looking like it failed */
+  function scrollResultsIntoView() {
+    const box = $('#tpResults');
+    if (!box) return;
+    setTimeout(function () {
+      try { box.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      catch (e) { box.scrollIntoView(); }
+    }, 80);
   }
 
   /* ======================== HERO ====================================== */
@@ -1706,6 +1824,9 @@
   let tpConns = [];
   let tpOpen = {};
   let tpRefs = { from: null, to: null };
+  // SBB route planned ahead of the tap, keyed by the current 起点/终点 values
+  let tpRoute = null;
+  let tpRouteTimer = null;
 
   function resolveRef(text) {
     const t = String(text || '').trim();
@@ -1884,7 +2005,23 @@
         const inner = $('.sheet-inner');
         wireSeqChips(inner, '#tpFrom', '#tpTo', 'data-tp-set', $('#tpChipHint'));
 
+        // plan the SBB route ahead of the tap so the button opens the app
+        // synchronously (and never leaves a stray loading tab behind)
+        tpRoute = null;
+        ['#tpFrom', '#tpTo'].forEach(function (sel) {
+          const el = $(sel);
+          if (el) el.addEventListener('input', function () { schedulePrimeSbb(day); });
+        });
+        ['#tpDate', '#tpTime'].forEach(function (sel) {
+          const el = $(sel);
+          if (el) el.addEventListener('change', function () { schedulePrimeSbb(day); });
+        });
+        primeSbbRoute(day);
+
         inner.addEventListener('click', function (ev) {
+          // a chip tap rewrites 起点/终点 programmatically — re-plan for it
+          if (ev.target.closest('[data-tp-set]')) schedulePrimeSbb(day);
+
           const det = ev.target.closest('[data-conn-detail]');
           if (det) {
             const i = Number(det.dataset.connDetail);
@@ -1932,89 +2069,32 @@
             const fv = $('#tpFrom').value.trim();
             const tv = $('#tpTo').value.trim();
             if (!fv || !tv) { toast('请填写起点和终点'); return; }
-            const fr = resolveRef(fv);
-            const tr = resolveRef(tv);
-            const btn = $('#tpSbb');
-            const orig = btn.innerHTML;
             const info = $('#tpSbbInfo');
-            const setInfo = function (t) {
-              if (!info) return;
-              info.textContent = t || '';
-              info.style.display = t ? 'block' : 'none';
-            };
-            setInfo('');
+            if (info) { info.textContent = ''; info.style.display = 'none'; }
 
-            // plain station names carry no coordinates — open straight away
-            const needsLookup = (fr && fr.lat != null) || (tr && tr.lat != null);
-            if (!needsLookup) {
-              window.open(sbbUrl({ name: sbbLabel(fr) }, { name: sbbLabel(tr) }), '_blank', 'noopener');
+            // the route was planned when the sheet opened / fields changed, so
+            // we can open the app right inside this tap — no popup block, and
+            // this sheet stays put for when the traveller comes back
+            if (tpRoute && tpRoute.key === sbbRouteKey(fv, tv)) {
+              openRoute(tpRoute);
               return;
             }
 
-            // open the tab synchronously (inside the user gesture) so mobile
-            // browsers don't block the later redirect as a popup
-            const win = window.open('', '_blank');
-            if (win) {
-              try {
-                win.document.write('<meta name="viewport" content="width=device-width,initial-scale=1">' +
-                  '<p style="font:15px system-ui;padding:24px;color:#666">正在规划最优上车 / 下车站…</p>');
-              } catch (e) { /* about:blank is writable in practice; ignore if not */ }
-            }
+            // fields changed moments ago and the re-plan hasn't landed yet —
+            // resolve here, showing progress on the button (not a stray tab)
+            const btn = $('#tpSbb');
+            const orig = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '正在规划最优上车 / 下车站…';
-
-            // Plan from the ORIGINAL coordinates and let the timetable engine
-            // choose the stops. Pre-picking the geometrically nearest stop is
-            // exactly what produced the slow bus route in the Geneva case: the
-            // engine instead walks a few minutes to a faster tram. We hand SBB
-            // the boarding / alighting stops of its best connection.
-            SERVICES.connections({
-              from: fr, to: tr,
-              date: ($('#tpDate') && $('#tpDate').value) || day.date,
-              time: ($('#tpTime') && $('#tpTime').value) || '08:00',
-              limit: 5,
-            }).then(function (list) {
-              const best = pickBestConnection(list);
-              const rides = best.sections.filter(function (s) { return s.kind === 'ride'; });
+            planSbbRoute(day, fv, tv).then(function (r) {
+              tpRoute = r;
               btn.disabled = false;
               btn.innerHTML = orig;
-              if (!rides.length) {
-                if (win) win.close();
-                toast('这段距离很近，步行即可，无需乘车');
-                return;
-              }
-              const board = rides[0].from;
-              const alight = rides[rides.length - 1].to;
-              const line = rides.map(function (r) { return (r.cat + ' ' + r.num).trim(); }).join(' + ');
-              setInfo('最优路线 ' + line + '：' + board + ' 上车 → ' + alight + ' 下车（约 ' + (best.duration || '') + '）');
-              openSbb(win, { name: board }, { name: alight });
-              toast('已按最优路线 ' + line + '：' + board + ' → ' + alight);
+              openRoute(r);
             }).catch(function () {
-              // engine unreachable — fall back to the nearest-stop resolution
-              Promise.all([toStation(fr), toStation(tr)]).then(function (res) {
-                btn.disabled = false;
-                btn.innerHTML = orig;
-                const fs = res[0], ts = res[1];
-                if (!fs || !fs.name || !ts || !ts.name) {
-                  if (win) win.close();
-                  toast('没能解析到车站，请手动输入车站名');
-                  return;
-                }
-                if (fs.name === ts.name) {
-                  if (win) win.close();
-                  setInfo('起点与终点是同一车站：' + fs.name);
-                  toast('起点与终点是同一车站（' + fs.name + '），这段不需要乘车');
-                  return;
-                }
-                setInfo('最近车站：' + fs.name + ' → ' + ts.name);
-                openSbb(win, fs, ts);
-                toast('已换成最近车站：' + fs.name + ' → ' + ts.name);
-              }).catch(function () {
-                btn.disabled = false;
-                btn.innerHTML = orig;
-                if (win) win.close();
-                toast('解析车站失败，请重试，或手动填写车站名');
-              });
+              btn.disabled = false;
+              btn.innerHTML = orig;
+              toast('规划失败，请重试，或手动输入车站名');
             });
             return;
           }
@@ -2043,11 +2123,15 @@
             btn.disabled = false;
             btn.innerHTML = icon('train') + '重新查询';
             renderConnections();
+            scrollResultsIntoView();
+            toast('查到 ' + list.length + ' 个班次');
           }).catch(function (e) {
             btn.disabled = false;
             btn.innerHTML = icon('train') + '查询可行班次';
             $('#tpResults').innerHTML = '<div class="egroup-empty">' +
               esc(e.message || '查询失败') + '<br>可以直接用下面的「手动添加一段交通」。</div>';
+            scrollResultsIntoView();
+            toast(e.message || '查询失败');
           });
         });
       }, 'editor');
