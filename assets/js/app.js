@@ -976,13 +976,19 @@
   const DAY_START = 8 * 60 + 30;   // default: leave the hotel at 08:30
   const TRANSFER = 20;             // station → first sight, and sight → station
 
-  /** "约 2 小时 27 分" / "约 12 分钟" → minutes, or null when unparseable */
+  /**
+   * "约 2 小时 27 分" / "约 12 分钟" / "2.5 小时" / "150 分钟" → minutes, or
+   * null when unparseable. The decimal case matters: someone typing "2.5 小时"
+   * must not be read as "5 小时".
+   */
   function parseDuration(txt) {
     const s = String(txt || '');
-    const h = /(\d+)\s*小时/.exec(s);
-    const m = /(\d+)\s*分/.exec(s);
+    const h = /(\d+(?:[.,]\d+)?)\s*(?:小时|个小时|h\b)/i.exec(s);
+    const m = /(\d+(?:[.,]\d+)?)\s*分/.exec(s);
     if (!h && !m) return null;
-    return (h ? Number(h[1]) * 60 : 0) + (m ? Number(m[1]) : 0);
+    const hm = h ? Number(String(h[1]).replace(',', '.')) * 60 : 0;
+    const mm = m ? Number(String(m[1]).replace(',', '.')) : 0;
+    return Math.round(hm + mm);
   }
 
   /**
@@ -1000,17 +1006,25 @@
    */
   function dayWindow(d) {
     let start = DAY_START, end = null, note = '';
+    // Legs added in the app land in DAYS[].transport too (store.apply merges
+    // them), so a train the traveller adds later is picked up automatically.
     ((d && d.transport) || []).forEach(function (l) {
-      if (!l || !l.booked) return;
-      const m = /^(\d{1,2}):(\d{2})$/.exec(String(l.booked));
+      if (!l) return;
+      const at = l.booked || l.time;        // booked is authoritative; time is a plan
+      if (!at) return;
+      const dur = parseDuration(l.duration);
+      // `time` is set on plain walks as well, so only trust it for legs long
+      // enough to be an actual move; an explicit `booked` always counts.
+      if (!l.booked && (dur == null || dur < 30)) return;
+      const m = /^(\d{1,2}):(\d{2})$/.exec(String(at));
       if (!m) return;
       const dep = Number(m[1]) * 60 + Number(m[2]);
-      const dur = parseDuration(l.duration);
+      const how = l.booked ? '已订' : '计划';
       if (dep < 15 * 60) {
         const arr = dep + (dur == null ? 60 : dur) + TRANSFER;
         if (arr > start) {
           start = arr;
-          note = '当天 ' + l.booked + ' 从 ' + l.from + ' 出发前往 ' + l.to +
+          note = '当天 ' + at + '（' + how + '）从 ' + l.from + ' 出发前往 ' + l.to +
             (dur != null ? '（约 ' + (Math.round(dur / 6) / 10) + ' 小时）' : '') +
             '，约 ' + fmtClock(arr) + ' 才能开始游览';
         }
@@ -1018,8 +1032,8 @@
         const lim = dep - TRANSFER;
         if (end == null || lim < end) {
           end = lim;
-          note = (note ? note + '；' : '') + '当天 ' + l.booked + ' 要离开 ' + l.from +
-            '，需在 ' + fmtClock(lim) + ' 前结束游览';
+          note = (note ? note + '；' : '') + '当天 ' + at + '（' + how + '）要离开 ' +
+            l.from + '，需在 ' + fmtClock(lim) + ' 前结束游览';
         }
       }
     });
@@ -2157,6 +2171,9 @@
 
   /** re-render whatever is on screen after a mutation */
   function refreshAfterEdit() {
+    // the itinerary changed, so any suggestion on screen is now stale — a new
+    // train leg must be able to move the day's window
+    mapSuggest = null;
     if (state.mapReady && state.view === 'map') { renderMapLegend(); renderMapContent(); }
     if (state.view === 'today') renderToday();
     else if (state.view === 'itin') renderItin();
