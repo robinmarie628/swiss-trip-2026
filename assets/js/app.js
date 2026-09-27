@@ -160,6 +160,16 @@
   }
 
   /**
+   * Xiaohongshu (RED) web search. The site renders results client-side, but
+   * /search_result?keyword=… is its canonical search URL (the page title comes
+   * back as "<keyword> - 小红书搜索"), and on a phone it offers to open the app.
+   */
+  function xhsUrl(q) {
+    return 'https://www.xiaohongshu.com/search_result?keyword=' +
+      encodeURIComponent(String(q || '').trim());
+  }
+
+  /**
    * Build a Google Maps transit-directions URL from two resolveRef() results.
    * Prefers lat,lng when we have them; falls back to the place name (Google
    * will geocode). `travelmode=transit` covers bus, rail, and the SBB network.
@@ -653,6 +663,9 @@
   let map = null;
   let mapLayerRef = null;
   let overlayGroup = null;
+  // every marker of the current render, keyed by coordinate, so tapping a row
+  // in the list can find and animate the matching pin
+  let mapMarkers = [];
 
   const TILE = {
     std: {
@@ -782,6 +795,8 @@
           icon('nav') + 'Google 地图导航</a>' +
         '<a class="btn block" href="' + u.apple + '" target="_blank" rel="noopener">' +
           icon('nav') + 'Apple 地图导航</a>' +
+        '<a class="btn block ghost" href="' + xhsUrl(s.name) + '" target="_blank" rel="noopener">' +
+          icon('globe') + '在小红书搜「' + esc(s.name) + '」</a>' +
         '<button class="btn block ghost" data-photo-copy="' + esc(s.id) + '">' +
           icon('link') + '复制地址</button>' +
         '<button class="btn block ghost" data-photo-map="' + esc(s.id) + '">' +
@@ -856,6 +871,7 @@
     const isAll = state.mapFilter === 'all';
     const days = currentMapDays();
     overlayGroup.clearLayers();
+    mapMarkers = [];
     const allPts = [];
 
     if (isAll) {
@@ -883,9 +899,10 @@
         seen[h.id] = 1;
         const r = REGIONS[h.region] || REGIONS.transit;
         const label = String(h.city).split(/\s/)[0];
-        L.marker([h.lat, h.lng], { icon: makeCityPin(r.color, label) })
+        const mk = L.marker([h.lat, h.lng], { icon: makeCityPin(r.color, label) })
           .addTo(overlayGroup)
           .bindPopup(popupHtml(h.name, h.address, h.lat, h.lng, h.name));
+        mapMarkers.push({ lat: h.lat, lng: h.lng, marker: mk });
         allPts.push([h.lat, h.lng]);
       });
     } else {
@@ -896,19 +913,21 @@
 
         const h = hotelById(d.hotelId);
         if (h) {
-          L.marker([h.lat, h.lng], { icon: makeHotelPin(r.color) })
+          const mk = L.marker([h.lat, h.lng], { icon: makeHotelPin(r.color) })
             .addTo(overlayGroup)
             .bindPopup(popupHtml(h.name, h.address, h.lat, h.lng, h.name));
+          mapMarkers.push({ lat: h.lat, lng: h.lng, marker: mk });
           allPts.push([h.lat, h.lng]);
         }
 
         const pts = [];
         d.places.forEach(function (p, pi) {
           pts.push([p.lat, p.lng]);
-          L.marker([p.lat, p.lng], { icon: makePin('', r.color, String(pi + 1)) })
+          const mk = L.marker([p.lat, p.lng], { icon: makePin('', r.color, String(pi + 1)) })
             .addTo(overlayGroup)
             .bindPopup(popupHtml(p.name, deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''),
               p.lat, p.lng, p.name));
+          mapMarkers.push({ lat: p.lat, lng: p.lng, marker: mk });
           allPts.push([p.lat, p.lng]);
         });
 
@@ -937,9 +956,10 @@
     // photo spots are drawn last so they sit above the route lines
     const spots = photoSpotsInView(days);
     spots.forEach(function (s) {
-      L.marker([s.lat, s.lng], { icon: makePhotoPin(), zIndexOffset: 400 })
+      const mk = L.marker([s.lat, s.lng], { icon: makePhotoPin(), zIndexOffset: 400 })
         .addTo(overlayGroup)
         .bindPopup(photoPopupHtml(s));
+      mapMarkers.push({ lat: s.lat, lng: s.lng, marker: mk });
       allPts.push([s.lat, s.lng]);
     });
 
@@ -951,6 +971,30 @@
 
     renderMapPlaces(days);
     $('#mapListTitle').textContent = isAll ? '全部地点' : '本日地点';
+  }
+
+  /**
+   * Pan to a coordinate and make its pin pulse, so tapping a row in the list
+   * visibly points at the right marker instead of leaving the user to hunt for
+   * it among the numbered pins.
+   */
+  function pulseMapMarker(lat, lng, zoom) {
+    if (!map) return;
+    map.setView([lat, lng], zoom || Math.max(map.getZoom(), 15), { animate: true });
+
+    const hit = mapMarkers.filter(function (m) {
+      return Math.abs(m.lat - lat) < 1e-6 && Math.abs(m.lng - lng) < 1e-6;
+    })[0];
+    if (!hit || !hit.marker.getElement) return;
+    const el = hit.marker.getElement();
+    if (!el) return;
+
+    // drop + force reflow + re-add, so tapping the same row twice re-animates
+    el.classList.remove('pin-pulse');
+    void el.offsetWidth;
+    el.classList.add('pin-pulse');
+    if (hit._pulseTimer) clearTimeout(hit._pulseTimer);
+    hit._pulseTimer = setTimeout(function () { el.classList.remove('pin-pulse'); }, 3400);
   }
 
   function renderMapPlaces(days) {
@@ -2601,12 +2645,14 @@
     }
   }
 
-  function navSheet(lat, lng, name, sub) {
+  function navSheet(lat, lng, name, sub, search) {
     const u = navUrl(lat, lng, name);
     openSheet(name, sub || '', 
       '<div class="btn-row" style="display:grid;gap:9px">' +
         '<a class="btn block primary" href="' + u.google + '" target="_blank" rel="noopener">' + icon('nav') + 'Google 地图导航</a>' +
         '<a class="btn block" href="' + u.apple + '" target="_blank" rel="noopener">' + icon('nav') + 'Apple 地图导航</a>' +
+        '<a class="btn block ghost" href="' + xhsUrl(search || name) + '" target="_blank" rel="noopener">' +
+          icon('globe') + '在小红书搜「' + esc(search || name) + '」</a>' +
         '<a class="btn block ghost" href="' + u.geo + '">' + icon('pin') + '用手机默认地图打开</a>' +
         '<button class="btn block ghost" data-copy="' + lat + ',' + lng + '">复制坐标 ' + lat + ', ' + lng + '</button>' +
         '<button class="btn block ghost" data-map-here="' + lat + ',' + lng + '">在工作台地图中定位</button>' +
@@ -2930,14 +2976,20 @@
         const parts = place.dataset.place.split(':');
         const d = DAYS[Number(parts[0])];
         const p = d.places[Number(parts[1])];
-        if (p) navSheet(p.lat, p.lng, p.name, deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''));
+        if (p) {
+          // a bare "大喷泉" is ambiguous on 小红书 — lead the search with the city
+          const city = d.region && d.region !== 'transit' ? (regionOf(d).label || '') : '';
+          const q = city && p.name.indexOf(city) < 0 ? city + ' ' + p.name : p.name;
+          navSheet(p.lat, p.lng, p.name,
+            deEn(p.nameDe, p.nameEn) + (p.note ? ' · ' + p.note : ''), q);
+        }
         return;
       }
 
       const maplot = t.closest('[data-maplot]');
       if (maplot) {
         const ll = maplot.dataset.maplot.split(',').map(Number);
-        if (map) { map.setView(ll, 14, { animate: true }); }
+        pulseMapMarker(ll[0], ll[1], 15);
         window.scrollTo({ top: 0, behavior: 'smooth' });
         return;
       }
@@ -2947,7 +2999,7 @@
         const ll = mapHere.dataset.mapHere.split(',').map(Number);
         closeSheet();
         setView('map');
-        setTimeout(function () { if (map) map.setView(ll, 15, { animate: true }); }, 220);
+        setTimeout(function () { pulseMapMarker(ll[0], ll[1], 15); }, 260);
         return;
       }
 
@@ -3163,8 +3215,8 @@
         if (di >= 0) state.mapFilter = String(di);
         setView('map');
         setTimeout(function () {
-          if (map) map.setView([s.lat, s.lng], 15, { animate: true });
           renderMapContent();
+          pulseMapMarker(s.lat, s.lng, 15);
         }, 240);
         return;
       }
