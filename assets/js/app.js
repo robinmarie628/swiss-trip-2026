@@ -218,6 +218,20 @@
     return 'https://app.sbbmobile.ch/timetable?from=' + o + '&to=' + d;
   }
 
+  /** the timetable engine's cleanest option: fewest changes, then shortest ride */
+  function pickBestConnection(list) {
+    return list.slice().sort(function (a, b) {
+      if (a.transfers !== b.transfers) return a.transfers - b.transfers;
+      return (a.durationMin || 9999) - (b.durationMin || 9999);
+    })[0];
+  }
+
+  /** navigate the pre-opened tab (or the current one) to the SBB deep link */
+  function openSbb(win, fromSt, toSt) {
+    const u = sbbUrl(fromSt, toSt);
+    if (win) win.location.href = u; else window.location.href = u;
+  }
+
   /* ======================== HERO ====================================== */
   function renderHero() {
     const day = DAYS[state.sel];
@@ -1806,9 +1820,10 @@
         icon('map') + '用 Google 地图查公交路线</button>' +
       '<button class="btn block ghost" id="tpSbb" style="height:46px;margin-top:8px">' +
         icon('ticket') + '用 SBB App 查票购票</button>' +
+      '<div class="hint" id="tpSbbInfo" style="display:none;margin-top:8px"></div>' +
       '<div class="hint" style="margin-top:8px">' +
         'Google 地图会同时给出公交、步行与驾车方案，适合 SBB 没有覆盖到的最后一公里。<br>' +
-        'SBB 只认车站名：点「SBB App」会先自动把酒店 / 景点换成最近的车站（例如「Sunstar Hotel」→「Grindelwald, Firstbahn」），再打开 SBB Mobile 查班次、买票；没装 App 会自动跳到 SBB 网页。</div>' +
+        'SBB 只认车站名：点「SBB App」会先用实时时刻表规划最优路线，自动取「就近的上车站 / 下车站」（例如酒店旁步行几分钟的 tram 站，而不是门口的慢速巴士站），再打开 SBB Mobile 查班次、买票；没装 App 会自动跳到 SBB 网页。</div>' +
       '<div id="tpResults" style="margin-top:14px"></div>' +
       '<div class="sheet-sep"></div>' +
       '<button class="btn block ghost" id="tpManual">手动添加一段交通</button>';
@@ -1921,60 +1936,85 @@
             const tr = resolveRef(tv);
             const btn = $('#tpSbb');
             const orig = btn.innerHTML;
+            const info = $('#tpSbbInfo');
+            const setInfo = function (t) {
+              if (!info) return;
+              info.textContent = t || '';
+              info.style.display = t ? 'block' : 'none';
+            };
+            setInfo('');
 
-            // SBB only routes between stations, so a hotel / sight has to be
-            // swapped for its nearest stop first. Plain station names need no
-            // lookup — open straight away.
+            // plain station names carry no coordinates — open straight away
             const needsLookup = (fr && fr.lat != null) || (tr && tr.lat != null);
             if (!needsLookup) {
               window.open(sbbUrl({ name: sbbLabel(fr) }, { name: sbbLabel(tr) }), '_blank', 'noopener');
               return;
             }
 
-            // open the tab synchronously (still inside the user gesture) so
-            // mobile browsers don't block the later redirect as a popup
+            // open the tab synchronously (inside the user gesture) so mobile
+            // browsers don't block the later redirect as a popup
             const win = window.open('', '_blank');
             if (win) {
               try {
                 win.document.write('<meta name="viewport" content="width=device-width,initial-scale=1">' +
-                  '<p style="font:15px system-ui;padding:24px;color:#666">正在解析最近车站…</p>');
+                  '<p style="font:15px system-ui;padding:24px;color:#666">正在规划最优上车 / 下车站…</p>');
               } catch (e) { /* about:blank is writable in practice; ignore if not */ }
             }
             btn.disabled = true;
-            btn.innerHTML = '正在解析最近车站…';
+            btn.innerHTML = '正在规划最优上车 / 下车站…';
 
-            Promise.all([toStation(fr), toStation(tr)]).then(function (res) {
+            // Plan from the ORIGINAL coordinates and let the timetable engine
+            // choose the stops. Pre-picking the geometrically nearest stop is
+            // exactly what produced the slow bus route in the Geneva case: the
+            // engine instead walks a few minutes to a faster tram. We hand SBB
+            // the boarding / alighting stops of its best connection.
+            SERVICES.connections({
+              from: fr, to: tr,
+              date: ($('#tpDate') && $('#tpDate').value) || day.date,
+              time: ($('#tpTime') && $('#tpTime').value) || '08:00',
+              limit: 5,
+            }).then(function (list) {
+              const best = pickBestConnection(list);
+              const rides = best.sections.filter(function (s) { return s.kind === 'ride'; });
               btn.disabled = false;
               btn.innerHTML = orig;
-              const fs = res[0], ts = res[1];
-              if (!fs || !fs.name || !ts || !ts.name) {
+              if (!rides.length) {
                 if (win) win.close();
-                toast('没能解析到车站，请手动输入车站名');
+                toast('这段距离很近，步行即可，无需乘车');
                 return;
               }
-              // show the substitution in the inputs so the route is transparent
-              if (fs.name !== fv) $('#tpFrom').value = fs.name;
-              if (ts.name !== tv) $('#tpTo').value = ts.name;
-
-              // both endpoints on one stop means there is nothing to ride —
-              // say so rather than opening an empty SBB page
-              const sameStation = (fs.stationId && ts.stationId)
-                ? fs.stationId === ts.stationId
-                : fs.name === ts.name;
-              if (sameStation) {
-                if (win) win.close();
-                toast('起点与终点是同一车站（' + fs.name + '），这段不需要乘车');
-                return;
-              }
-
-              const u = sbbUrl(fs, ts);
-              if (win) win.location.href = u; else window.location.href = u;
-              toast('已换成最近车站：' + fs.name + ' → ' + ts.name);
+              const board = rides[0].from;
+              const alight = rides[rides.length - 1].to;
+              const line = rides.map(function (r) { return (r.cat + ' ' + r.num).trim(); }).join(' + ');
+              setInfo('最优路线 ' + line + '：' + board + ' 上车 → ' + alight + ' 下车（约 ' + (best.duration || '') + '）');
+              openSbb(win, { name: board }, { name: alight });
+              toast('已按最优路线 ' + line + '：' + board + ' → ' + alight);
             }).catch(function () {
-              btn.disabled = false;
-              btn.innerHTML = orig;
-              if (win) win.close();
-              toast('解析车站失败，请重试，或手动填写车站名');
+              // engine unreachable — fall back to the nearest-stop resolution
+              Promise.all([toStation(fr), toStation(tr)]).then(function (res) {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+                const fs = res[0], ts = res[1];
+                if (!fs || !fs.name || !ts || !ts.name) {
+                  if (win) win.close();
+                  toast('没能解析到车站，请手动输入车站名');
+                  return;
+                }
+                if (fs.name === ts.name) {
+                  if (win) win.close();
+                  setInfo('起点与终点是同一车站：' + fs.name);
+                  toast('起点与终点是同一车站（' + fs.name + '），这段不需要乘车');
+                  return;
+                }
+                setInfo('最近车站：' + fs.name + ' → ' + ts.name);
+                openSbb(win, fs, ts);
+                toast('已换成最近车站：' + fs.name + ' → ' + ts.name);
+              }).catch(function () {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+                if (win) win.close();
+                toast('解析车站失败，请重试，或手动填写车站名');
+              });
             });
             return;
           }
