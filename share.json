@@ -1,0 +1,263 @@
+{
+  "app": "swiss-trip-workbench",
+  "kind": "sync",
+  "version": 1,
+  "syncedAt": "2026-09-27T10:02:54.858Z",
+  "user": {
+    "version": 1,
+    "places": {
+      "d2": [],
+      "d5": [
+        {
+          "name": "ETH Zürich",
+          "nameEn": "",
+          "lat": 47.413218,
+          "lng": 8.5374914,
+          "kind": "sight",
+          "note": "130 · Binzmühlestrasse",
+          "stationId": null
+        },
+        {
+          "name": "苏黎世大教堂",
+          "nameEn": "",
+          "lat": 47.3701214,
+          "lng": 8.5439115,
+          "kind": "sight",
+          "note": "Grossmünsterplatz · Rathaus",
+          "stationId": null
+        },
+        {
+          "name": "Augustinergasse",
+          "nameEn": "",
+          "lat": 47.3722363,
+          "lng": 8.5391539,
+          "kind": "sight",
+          "note": "Lindenhof · Altstadt",
+          "stationId": null
+        },
+        {
+          "name": "Landesmuseum",
+          "nameEn": "",
+          "lat": 47.3792397,
+          "lng": 8.5407019,
+          "kind": "sight",
+          "note": "2 · Museumstrasse",
+          "stationId": null
+        }
+      ]
+    },
+    "legs": {
+      "d1": [
+        {
+          "from": "Holiday Inn Express Geneva Airport by IHG",
+          "to": "圣皮埃尔大教堂",
+          "mode": "巴士 / 电车",
+          "duration": "37 分钟",
+          "note": "T 14 → B 3",
+          "time": "10:05",
+          "booked": null,
+          "detail": [
+            {
+              "kind": "walk",
+              "min": 1
+            },
+            {
+              "kind": "ride",
+              "cat": "T",
+              "num": "14",
+              "from": "Vernier, Blandonnet",
+              "to": "Genève, Poterie",
+              "dep": "10:12",
+              "arr": "10:21",
+              "platform": "A",
+              "stops": 7
+            },
+            {
+              "kind": "ride",
+              "cat": "B",
+              "num": "3",
+              "from": "Genève, Poterie",
+              "to": "Genève, Palais Eynard",
+              "dep": "10:26",
+              "arr": "10:35",
+              "platform": "X",
+              "stops": 7
+            },
+            {
+              "kind": "walk",
+              "min": 1
+            }
+          ]
+        },
+        {
+          "from": "Bourg-de-Four 广场",
+          "to": "花钟 / 英国花园",
+          "mode": "步行",
+          "duration": "11 分钟",
+          "note": "",
+          "time": "14:30",
+          "booked": null,
+          "detail": [
+            {
+              "kind": "walk",
+              "min": 1
+            }
+          ]
+        },
+        {
+          "from": "花钟 / 英国花园",
+          "to": "Holiday Inn Express Geneva Airport by IHG",
+          "mode": "巴士 / 电车",
+          "duration": "35 分钟",
+          "note": "T 12 → T 14",
+          "time": "16:00",
+          "booked": null,
+          "detail": [
+            {
+              "kind": "walk",
+              "min": 1
+            },
+            {
+              "kind": "ride",
+              "cat": "T",
+              "num": "12",
+              "from": "Genève, Molard",
+              "to": "Genève, Bel-Air",
+              "dep": "16:08",
+              "arr": "16:09",
+              "platform": "Z",
+              "stops": 2
+            },
+            {
+              "kind": "ride",
+              "cat": "T",
+              "num": "14",
+              "from": "Genève, Bel-Air",
+              "to": "Vernier, Blandonnet",
+              "dep": "16:11",
+              "arr": "16:27",
+              "platform": "A",
+              "stops": 11
+            },
+            {
+              "kind": "walk",
+              "min": 1
+            }
+          ]
+        }
+      ],
+      "d2": [
+        {
+          "from": "Sunstar Hotel & Spa Grindelwald",
+          "to": "Dorfstrasse 主街",
+          "mode": "步行",
+          "duration": "3 分钟",
+          "note": "",
+          "time": "14:00",
+          "booked": null,
+          "detail": [
+            {
+              "kind": "walk",
+              "min": 1
+            }
+          ]
+        }
+      ],
+      "d5": [
+        {
+          "from": "Zurich hb",
+          "to": "Landesmuseum",
+          "mode": "步行",
+          "duration": "2 分钟",
+          "note": "",
+          "time": "11:00",
+          "booked": null,
+          "detail": [
+            {
+              "kind": "walk",
+              "min": 1
+            }
+          ]
+        }
+      ]
+    },
+    "legEdits": {
+      "d5": {
+        "市区景点→|电车 + 步行": {
+          "from": "行李寄存火车站？",
+          "to": "",
+          "mode": "步行",
+          "duration": "",
+          "note": "",
+          "time": null,
+          "booked": null
+        }
+      }
+    },
+    "blocks": {},
+    "hidden": {
+      "d1": [
+        "大喷泉"
+      ],
+      "d5": [
+        "苏黎世老城",
+        "Zürich HB→酒店|S-Bahn 至 Zürich Oerlikon + 步行 / 电车"
+      ]
+    },
+    "photoSpots": [],
+    "hiddenPhotos": [],
+    "photoVisible": true,
+    "order": {
+      "d1": {
+        "p": [
+          "圣皮埃尔大教堂",
+          "日内瓦老城",
+          "Bourg-de-Four 广场",
+          "大喷泉",
+          "花钟 / 英国花园"
+        ]
+      },
+      "d2": {
+        "p": [
+          "Sunstar Hotel & Spa Grindelwald",
+          "格林德瓦村",
+          "Dorfstrasse 主街",
+          "Firstbahn 缆车站"
+        ]
+      },
+      "d5": {
+        "p": [
+          "Landesmuseum",
+          "林登霍夫",
+          "班霍夫大街",
+          "苏黎世大教堂",
+          "Augustinergasse",
+          "苏黎世湖滨",
+          "利马特河",
+          "ETH Zürich"
+        ]
+      }
+    },
+    "sortMode": {
+      "d1": {
+        "p": "manual"
+      },
+      "d2": {
+        "p": "manual"
+      },
+      "d5": {
+        "p": "manual"
+      }
+    },
+    "presets": null,
+    "budget": null,
+    "rates": {
+      "cny": 8.1049,
+      "eur": 1.0588,
+      "date": "2026-09-25",
+      "source": "欧洲央行 (ECB)",
+      "at": 1790479732723
+    }
+  },
+  "expenses": []
+}
