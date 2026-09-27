@@ -2,7 +2,7 @@
   "app": "swiss-trip-workbench",
   "kind": "sync",
   "version": 1,
-  "syncedAt": "2026-09-27T12:04:14.868Z",
+  "syncedAt": "2026-09-27T12:53:09.018Z",
   "user": {
     "version": 1,
     "places": {
@@ -99,62 +99,6 @@
               "min": 1
             }
           ]
-        },
-        {
-          "from": "Bourg-de-Four 广场",
-          "to": "花钟 / 英国花园",
-          "mode": "步行",
-          "duration": "11 分钟",
-          "note": "",
-          "time": "14:30",
-          "booked": null,
-          "detail": [
-            {
-              "kind": "walk",
-              "min": 1
-            }
-          ]
-        },
-        {
-          "from": "花钟 / 英国花园",
-          "to": "Holiday Inn Express Geneva Airport by IHG",
-          "mode": "巴士 / 电车",
-          "duration": "35 分钟",
-          "note": "T 12 → T 14",
-          "time": "16:00",
-          "booked": null,
-          "detail": [
-            {
-              "kind": "walk",
-              "min": 1
-            },
-            {
-              "kind": "ride",
-              "cat": "T",
-              "num": "12",
-              "from": "Genève, Molard",
-              "to": "Genève, Bel-Air",
-              "dep": "16:08",
-              "arr": "16:09",
-              "platform": "Z",
-              "stops": 2
-            },
-            {
-              "kind": "ride",
-              "cat": "T",
-              "num": "14",
-              "from": "Genève, Bel-Air",
-              "to": "Vernier, Blandonnet",
-              "dep": "16:11",
-              "arr": "16:27",
-              "platform": "A",
-              "stops": 11
-            },
-            {
-              "kind": "walk",
-              "min": 1
-            }
-          ]
         }
       ],
       "d2": [
@@ -208,7 +152,8 @@
     "blocks": {},
     "hidden": {
       "d1": [
-        "大喷泉"
+        "大喷泉",
+        "花钟 / 英国花园"
       ],
       "d5": [
         "苏黎世老城",
@@ -219,7 +164,8 @@
         "苏黎世大教堂"
       ],
       "d7": [
-        "Bourg-de-Four 广场"
+        "Bourg-de-Four 广场",
+        "圣皮埃尔大教堂"
       ]
     },
     "photoSpots": [],
@@ -285,5 +231,14 @@
       "at": 1790479732723
     }
   },
-  "expenses": []
+  "expenses": [
+    {
+      "id": "e1790510811421cbmk",
+      "amount": 150,
+      "cat": "transport",
+      "note": "🚄火车半价票",
+      "date": "2026-09-27",
+      "ts": 1790510811421
+    }
+  ]
 }
