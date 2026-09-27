@@ -3317,15 +3317,25 @@
     return { path: (info.content && info.content.path) || ghConfig().path, shared: shared };
   }
 
-  async function ghSyncPull() {
+  /** read + decode the remote sync file (throws with a readable message) */
+  async function ghFetchPayload() {
     if (!ghReady()) throw new Error('请先设置仓库与 Token');
     const file = await ghRead();
     if (!file) throw new Error('远端还没有这个文件，先「上传到 GitHub」一次');
     const payload = JSON.parse(b64decode(file.content));
     if (!payload || payload.kind !== 'sync' || !payload.user) throw new Error('文件不是本应用的同步数据');
+    return payload;
+  }
+
+  /** overwrite local data with an already-fetched payload — DESTRUCTIVE */
+  function ghApplyPull(payload) {
     applyPayload(payload);
     store.set(GH_LAST, Date.now());
     return { syncedAt: payload.syncedAt };
+  }
+
+  async function ghSyncPull() {
+    return ghApplyPull(await ghFetchPayload());
   }
 
   /* ---- sharing: publish a public copy friends can open without a token ---- */
@@ -3999,16 +4009,42 @@
       const ghPullBtn = t.closest('[data-gh-pull]');
       if (ghPullBtn) {
         ghPullBtn.disabled = true;
-        ghPullBtn.textContent = '拉取中…';
+        ghPullBtn.textContent = '读取中…';
         const back = function () { ghPullBtn.disabled = false; ghPullBtn.textContent = '从 GitHub 拉取'; };
-        ghSyncPull().then(function (r) {
-          toast('已从 GitHub 恢复' + (r.syncedAt ? '（' + r.syncedAt.slice(0, 16).replace('T', ' ') + '）' : ''));
+        // Read first, then CONFIRM. Pulling overwrites the local store wholesale,
+        // so it must never happen on a single stray tap.
+        ghFetchPayload().then(function (payload) {
           back();
-          refreshAfterEdit();
-          renderMore();
+          const when = payload.syncedAt ? payload.syncedAt.slice(0, 16).replace('T', ' ') : '（未知时间）';
+          const last = store.get(GH_LAST, 0);
+          openSheet('从 GitHub 拉取', '会用远端数据覆盖本机',
+            '<div style="font-size:13.5px;line-height:1.8;color:var(--ink-2);margin-bottom:12px">' +
+              '远端文件时间：<b>' + esc(when) + '</b><br>' +
+              '本机上次同步：<b>' + esc(last ? new Date(last).toLocaleString('zh-CN') : '从未') + '</b>' +
+            '</div>' +
+            '<div style="font-size:13.5px;line-height:1.8;color:var(--ink-2);margin-bottom:12px">' +
+              '拉取会把本机的<b>地点、交通、安排、拍照点、记账、预算</b>整体替换成 GitHub 上那一份。' +
+              '<b style="color:#c0392b">本机尚未上传的改动会丢失，且不可撤销。</b>' +
+            '</div>' +
+            '<div class="hint" style="margin-bottom:14px">' +
+              '<b>什么时候该拉取：</b>换了手机、清过浏览器数据、或想用另一台设备上的最新版本。<br>' +
+              '如果本机才是最新的，请改用「上传到 GitHub」——不要拉取。' +
+            '</div>' +
+            '<button class="btn block primary" id="doGhPull" style="background:#c0392b">确认覆盖本机数据</button>' +
+            '<button class="btn block ghost" id="doGhPullCancel" style="margin-top:8px">取消</button>',
+            function () {
+              $('#doGhPull').addEventListener('click', function () {
+                closeSheet();
+                ghApplyPull(payload);
+                refreshAfterEdit();
+                renderMore();
+                toast('已从 GitHub 恢复（' + when + '）');
+              });
+              $('#doGhPullCancel').addEventListener('click', closeSheet);
+            }, 'editor');
         }, function (e) {
-          toast('拉取失败：' + ((e && e.message) || e));
           back();
+          toast('读取失败：' + ((e && e.message) || e));
         });
         return;
       }
