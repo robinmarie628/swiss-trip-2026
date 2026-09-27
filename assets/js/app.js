@@ -1600,6 +1600,28 @@
             'Token 只保存在这台手机里。' +
           '</div>' +
           '</div>' +
+
+          /* sharing */
+          '<div class="sec-head" style="margin-top:18px"><h2>分享给朋友</h2>' +
+            '<span class="more">' + (appRepo() ? '公开' : '不可用') + '</span></div>' +
+          '<div class="card"><div class="card-bd tight">' +
+            (appRepo()
+              ? '<div class="kv"><span class="k">分享文件</span><span class="v">' +
+                  esc(appRepo() + '/' + SHARE_PATH) + '</span></div>'
+              : '<div class="kv"><span class="k">当前域名</span><span class="v">' +
+                  esc(location.hostname) + '（非 GitHub Pages，无法分享）</span></div>') +
+          '</div>' +
+          (ready && appRepo() ? '<div class="card-bd"><div class="btn-row">' +
+            '<button class="btn sm primary" data-gh-share="1">更新分享</button>' +
+            '<button class="btn sm ghost" data-gh-sharelink="1">复制分享链接</button>' +
+          '</div></div>' : '') +
+          '<div style="margin-top:10px;font-size:11.5px;line-height:1.65;color:var(--muted)">' +
+            '朋友打开 <b>' + esc(appRepo() ? shareLink() : '<本页地址>/#share') + '</b> ' +
+            '就会自动载入你最新分享的行程，不需要 Token。<br>' +
+            '分享文件放在本网页所在的公开仓库里，所以<b>任何人拿到链接都能看到</b>——' +
+            '目前包含记账；如果不想公开账目，告诉我，我把它改成只分享行程。' +
+          '</div>' +
+          '</div>' +
         '</div>';
       })() +
 
@@ -3189,32 +3211,56 @@
     return msg;
   }
 
-  /** the remote file, or null when it does not exist yet */
-  async function ghRead() {
-    const c = ghConfig();
-    const res = await fetch(ghContentsUrl(c) + '?ref=' + encodeURIComponent(c.branch || 'main'),
-      { headers: ghHeaders() });
+  /** one file from any repo we can reach, or null when it does not exist yet */
+  async function ghReadAt(repo, branch, path) {
+    const url = 'https://api.github.com/repos/' + repo + '/contents/' +
+      String(path).split('/').map(encodeURIComponent).join('/') +
+      '?ref=' + encodeURIComponent(branch || 'main');
+    const res = await fetch(url, { headers: ghHeaders() });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(await ghError(res));
     return res.json();
   }
 
-  async function ghWrite(text, message) {
-    const c = ghConfig();
-    const existing = await ghRead();
+  async function ghWriteAt(repo, branch, path, text, message) {
+    const existing = await ghReadAt(repo, branch, path);
     const body = {
       message: message,
       content: b64encode(text),
-      branch: c.branch || 'main',
+      branch: branch || 'main',
     };
     if (existing && existing.sha) body.sha = existing.sha;
-    const res = await fetch(ghContentsUrl(c), {
+    const res = await fetch('https://api.github.com/repos/' + repo + '/contents/' +
+      String(path).split('/').map(encodeURIComponent).join('/'), {
       method: 'PUT',
       headers: Object.assign({ 'Content-Type': 'application/json' }, ghHeaders()),
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(await ghError(res));
     return res.json();
+  }
+
+  /** the remote file, or null when it does not exist yet */
+  function ghRead() {
+    const c = ghConfig();
+    return ghReadAt(c.repo, c.branch, c.path);
+  }
+
+  function ghWrite(text, message) {
+    const c = ghConfig();
+    return ghWriteAt(c.repo, c.branch, c.path, text, message);
+  }
+
+  /** overwrite the local store from a sync/share payload */
+  function applyPayload(payload) {
+    if (!payload || !payload.user) throw new Error('文件格式不对');
+    const cur = STORE.raw();
+    ['places', 'legs', 'legEdits', 'blocks', 'hidden', 'photoSpots', 'hiddenPhotos',
+      'order', 'sortMode', 'presets', 'budget', 'rates', 'photoVisible'].forEach(function (k) {
+      if (payload.user[k] !== undefined) cur[k] = payload.user[k];
+    });
+    STORE.save();
+    if (Array.isArray(payload.expenses)) saveExpenses(payload.expenses);
   }
 
   function b64encode(str) {
@@ -3267,15 +3313,93 @@
     if (!file) throw new Error('远端还没有这个文件，先「上传到 GitHub」一次');
     const payload = JSON.parse(b64decode(file.content));
     if (!payload || payload.kind !== 'sync' || !payload.user) throw new Error('文件不是本应用的同步数据');
-    const cur = STORE.raw();
-    ['places', 'legs', 'legEdits', 'blocks', 'hidden', 'photoSpots', 'hiddenPhotos',
-      'order', 'sortMode', 'presets', 'budget', 'rates', 'photoVisible'].forEach(function (k) {
-      if (payload.user[k] !== undefined) cur[k] = payload.user[k];
-    });
-    STORE.save();
-    if (Array.isArray(payload.expenses)) saveExpenses(payload.expenses);
+    applyPayload(payload);
     store.set(GH_LAST, Date.now());
     return { syncedAt: payload.syncedAt };
+  }
+
+  /* ---- sharing: publish a public copy friends can open without a token ---- */
+
+  const SHARE_PATH = 'share.json';
+  const SHARE_SNAP = 'swiss.preshare.v1';
+
+  /** owner/name of the repo that serves this page (from the Pages URL) */
+  function appRepo() {
+    const host = location.hostname || '';
+    if (!/\.github\.io$/i.test(host)) return '';
+    const owner = host.split('.')[0];
+    const seg = String(location.pathname || '/').split('/').filter(Boolean)[0] || '';
+    return seg ? owner + '/' + seg : owner + '/' + owner + '.github.io';
+  }
+
+  function shareLink() {
+    return location.origin + location.pathname.replace(/[^/]*$/, '') + '#share';
+  }
+
+  /**
+   * Publish the itinerary for friends. It goes into THIS site's own repo, so
+   * friends fetch it same-origin — no token, no CORS, and the link is just
+   * "<site>/#share". GitHub Pages serves static files with
+   * `Access-Control-Allow-Origin: *`, so this works from any device.
+   */
+  async function ghSharePush() {
+    if (!ghReady()) throw new Error('请先设置仓库与 Token');
+    const repo = appRepo();
+    if (!repo) throw new Error('分享只在 GitHub Pages 上可用（当前域名 ' + location.hostname + '）');
+    const payload = ghPayload();
+    const stamp = payload.syncedAt.slice(0, 16).replace('T', ' ');
+    await ghWriteAt(repo, ghConfig().branch, SHARE_PATH,
+      JSON.stringify(payload, null, 2), 'share: 行程更新 · ' + stamp);
+    store.set(GH_LAST, Date.now());
+    return { repo: repo, link: shareLink(), syncedAt: payload.syncedAt };
+  }
+
+  /** friend side: pull the public share file and show it */
+  async function loadShare() {
+    const res = await fetch(SHARE_PATH + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('找不到分享文件（HTTP ' + res.status + '）');
+    const payload = await res.json();
+    if (!payload || !payload.user) throw new Error('分享文件格式不对');
+    // Always snapshot what the viewer had, so 「退出」 can put it back. Snapshot
+    // unconditionally: "do they have data?" is hard to answer (a budget or a
+    // single expense counts), and restoring an empty store is harmless.
+    try {
+      localStorage.setItem(SHARE_SNAP,
+        JSON.stringify({ user: STORE.raw(), expenses: expenses() }));
+    } catch (e) {}
+    applyPayload(payload);
+    return payload;
+  }
+
+  function showShareBar(payload) {
+    let el = $('#shareBar');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'shareBar';
+      el.className = 'share-bar';
+      // sit in the flow right after the sticky header so it scrolls with the
+      // page but stays pinned under the header
+      const hdr = $('#hdr');
+      if (hdr && hdr.parentNode) hdr.parentNode.insertBefore(el, hdr.nextSibling);
+      else document.body.insertBefore(el, document.body.firstChild);
+    }
+    const when = payload.syncedAt ? payload.syncedAt.slice(0, 16).replace('T', ' ') : '';
+    el.innerHTML = '<span>' + icon('link') + '正在查看朋友分享的行程' +
+      (when ? ' · ' + esc(when) : '') + '</span>' +
+      '<button class="btn sm ghost" data-share-exit="1">退出</button>';
+    el.hidden = false;
+  }
+
+  function maybeLoadShare(wanted) {
+    if (!wanted) return;
+    loadShare().then(function (p) {
+      showShareBar(p);
+      refreshAfterEdit();
+      setView('today');
+      toast('已载入朋友分享的行程');
+    }).catch(function (e) {
+      toast('载入分享失败：' + ((e && e.message) || e));
+    });
   }
 
   function openGhSetup() {
@@ -3858,6 +3982,43 @@
         return;
       }
 
+      const ghShareBtn = t.closest('[data-gh-share]');
+      if (ghShareBtn) {
+        ghShareBtn.disabled = true;
+        ghShareBtn.textContent = '发布中…';
+        const back = function () { ghShareBtn.disabled = false; ghShareBtn.textContent = '更新分享'; };
+        ghSharePush().then(function (r) {
+          toast('已发布分享：' + r.repo + '/' + SHARE_PATH);
+          back();
+          renderMore();
+        }, function (e) {
+          toast('发布失败：' + ((e && e.message) || e));
+          back();
+        });
+        return;
+      }
+
+      const ghShareLink = t.closest('[data-gh-sharelink]');
+      if (ghShareLink) {
+        copyText(shareLink(), '已复制分享链接');
+        return;
+      }
+
+      const shareExit = t.closest('[data-share-exit]');
+      if (shareExit) {
+        // put the viewer's own edits back before leaving the shared view
+        try {
+          const raw = localStorage.getItem(SHARE_SNAP);
+          if (raw) {
+            applyPayload(JSON.parse(raw));
+            localStorage.removeItem(SHARE_SNAP);
+          }
+        } catch (e) {}
+        try { history.replaceState(null, '', location.pathname); } catch (e) {}
+        location.reload();
+        return;
+      }
+
       /* ---- backup / restore ----------------------------------------- */
       const bk = t.closest('[data-backup]');
       if (bk) {
@@ -4029,6 +4190,10 @@
     // user edits must be merged into DAYS before anything renders
     STORE.load();
 
+    // Read the share intent NOW: setView() below rewrites location.hash to the
+    // active view, which would wipe the "#share" marker before we look at it.
+    const shareWanted = /^#share\b/i.test(location.hash || '');
+
     initSel();
     state.mapFilter = String(state.sel);
     bind();
@@ -4049,6 +4214,9 @@
     else $('#hdrSub').textContent = '行程已结束 · 8 天 7 晚';
 
     setView(state.view, { keepScroll: true });
+
+    // a friend opening <site>/#share gets the owner's published itinerary
+    maybeLoadShare(shareWanted);
 
     // weather: paint from cache immediately, then refresh in the background
     if (typeof WEATHER !== 'undefined') {
