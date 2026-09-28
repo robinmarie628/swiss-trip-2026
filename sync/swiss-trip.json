@@ -2,7 +2,7 @@
   "app": "swiss-trip-workbench",
   "kind": "sync",
   "version": 1,
-  "syncedAt": "2026-09-27T12:53:05.920Z",
+  "syncedAt": "2026-09-28T04:22:34.052Z",
   "user": {
     "version": 1,
     "places": {
@@ -53,6 +53,26 @@
           "lng": 8.5374914,
           "kind": "sight",
           "note": "130 · Binzmühlestrasse",
+          "stationId": null
+        }
+      ],
+      "d4": [
+        {
+          "name": "Fallbodensee",
+          "nameEn": "",
+          "lat": 46.5792087,
+          "lng": 7.9672967,
+          "kind": "sight",
+          "note": "Kleine Scheidegg · Lauterbrunnen",
+          "stationId": null
+        },
+        {
+          "name": "艾格尔峰",
+          "nameEn": "",
+          "lat": 46.5776321,
+          "lng": 8.0054694,
+          "kind": "sight",
+          "note": "格林德瓦 · Verwaltungskreis Interlaken-Oberhasli",
           "stationId": null
         }
       ]
@@ -228,7 +248,7 @@
       "eur": 1.0588,
       "date": "2026-09-25",
       "source": "欧洲央行 (ECB)",
-      "at": 1790479732723
+      "at": 1790545799423
     }
   },
   "expenses": [
