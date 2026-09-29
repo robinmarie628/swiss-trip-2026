@@ -2,7 +2,7 @@
   "app": "swiss-trip-workbench",
   "kind": "sync",
   "version": 1,
-  "syncedAt": "2026-09-29T13:03:13.647Z",
+  "syncedAt": "2026-09-29T14:00:45.704Z",
   "user": {
     "version": 1,
     "places": {
@@ -140,14 +140,59 @@
       ],
       "d5": [
         {
-          "from": "Zurich hb",
-          "to": "Landesmuseum",
-          "mode": "步行",
-          "duration": "2 分钟",
-          "note": "",
-          "time": "11:00",
+          "from": "Acasa Suites Hotel Zurich Oerlikon",
+          "to": "ETH Zürich",
+          "mode": "巴士 / 电车",
+          "duration": "9 分钟",
+          "note": "B 80",
+          "time": "13:01",
           "booked": null,
           "detail": [
+            {
+              "kind": "walk",
+              "min": 1
+            },
+            {
+              "kind": "ride",
+              "cat": "B",
+              "num": "80",
+              "from": "Zürich Oerlikon, Bahnhof Nord",
+              "to": "Zürich, Birchstrasse",
+              "dep": "13:04",
+              "arr": "13:07",
+              "platform": "",
+              "stops": 3
+            },
+            {
+              "kind": "walk",
+              "min": 1
+            }
+          ]
+        },
+        {
+          "from": "ETH Zürich",
+          "to": "Landesmuseum",
+          "mode": "游船",
+          "duration": "22 分钟",
+          "note": "S 14",
+          "time": "15:33",
+          "booked": null,
+          "detail": [
+            {
+              "kind": "walk",
+              "min": 1
+            },
+            {
+              "kind": "ride",
+              "cat": "S",
+              "num": "14",
+              "from": "Zürich Oerlikon",
+              "to": "Zürich HB",
+              "dep": "15:43",
+              "arr": "15:48",
+              "platform": "1",
+              "stops": 2
+            },
             {
               "kind": "walk",
               "min": 1
@@ -158,14 +203,14 @@
     },
     "legEdits": {
       "d5": {
-        "市区景点→|电车 + 步行": {
-          "from": "行李寄存火车站？",
-          "to": "",
-          "mode": "步行",
-          "duration": "",
-          "note": "",
+        "Lauterbrunnen→Zürich HB|火车（经 Interlaken Ost、Bern）": {
+          "from": "Lauterbrunnen",
+          "to": "Zürich Oerlikon",
+          "mode": "火车（经 Interlaken Ost、Bern）",
+          "duration": "约 2 小时 39 分",
+          "note": "需提前买票",
           "time": null,
-          "booked": null
+          "booked": "09:31"
         }
       }
     },
@@ -177,7 +222,8 @@
       ],
       "d5": [
         "苏黎世老城",
-        "Zürich HB→酒店|S-Bahn 至 Zürich Oerlikon + 步行 / 电车"
+        "Zürich HB→酒店|S-Bahn 至 Zürich Oerlikon + 步行 / 电车",
+        "市区景点→|电车 + 步行"
       ],
       "d6": [
         "圣母大教堂",
@@ -211,14 +257,14 @@
       },
       "d5": {
         "p": [
+          "ETH Zürich",
           "Landesmuseum",
           "林登霍夫",
           "Augustinergasse",
           "班霍夫大街",
           "苏黎世湖滨",
           "利马特河",
-          "Zürich Hauptbahnhof",
-          "ETH Zürich"
+          "Zürich Hauptbahnhof"
         ]
       }
     },
@@ -248,7 +294,7 @@
       "eur": 1.0566,
       "date": "2026-09-28",
       "source": "欧洲央行 (ECB)",
-      "at": 1790678577359
+      "at": 1790687029615
     }
   },
   "expenses": [
