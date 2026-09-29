@@ -4,7 +4,7 @@
    Map tiles are cached opportunistically after first view.
    ========================================================================== */
 
-const VERSION = 'v1.7.10';
+const VERSION = 'v1.7.11';
 const SHELL = 'swiss-shell-' + VERSION;
 const TILES = 'swiss-tiles-' + VERSION;
 
@@ -128,7 +128,7 @@ self.addEventListener('fetch', (event) => {
   if (url.origin === self.location.origin) {
     event.respondWith((async () => {
       try {
-        return await networkFirst(req, SHELL, 4000);
+        return await networkFirst(req, SHELL, 8000);
       } catch (e) {
         if (req.mode === 'navigate') {
           const cache = await caches.open(SHELL);

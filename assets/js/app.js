@@ -30,6 +30,10 @@
     sel: 'swiss.selday.v1',
   };
 
+  // shown in "更多 · 这个工作台" so you can confirm which build is loaded.
+  // Keep in step with VERSION in sw.js.
+  const APP_VERSION = 'v1.7.11';
+
   /* toast --------------------------------------------------------------- */
   let toastTimer = null;
   function toast(msg) {
@@ -2216,7 +2220,11 @@
           '<div class="btn-row" style="margin-top:12px">' +
             '<button class="btn sm primary" id="installBtn" hidden>' + icon('plus') + '添加到主屏幕</button>' +
             '<button class="btn sm ghost" data-print="1">打印 / 存为 PDF</button>' +
+            '<button class="btn sm ghost" data-sw-update="1">' + icon('swap') + '检查更新</button>' +
             '<button class="btn sm ghost" data-reset="1">清空本地数据</button>' +
+          '</div>' +
+          '<div style="margin-top:9px;font-size:11px;color:var(--faint);text-align:center">' +
+            '当前版本 ' + esc(APP_VERSION) + ' · 若功能没更新，点「检查更新」强制刷新' +
           '</div>' +
         '</div></div>' +
       '</div>' +
@@ -2229,6 +2237,25 @@
 
     $('#moreClock').textContent = $('#clockTime').textContent;
     hookInstall();
+  }
+
+  /**
+   * Force a clean reload: unregister the service worker and drop its caches so
+   * the next load fetches the newest app shell. This is the escape hatch when a
+   * stale cached build keeps a fix from showing up on the device.
+   */
+  function forceUpdate() {
+    toast('正在检查更新…');
+    const done = function () { location.reload(); };
+    if (!('serviceWorker' in navigator)) { done(); return; }
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      return Promise.all(regs.map(function (r) { return r.unregister(); }));
+    }).then(function () {
+      if (typeof caches === 'undefined') return null;
+      return caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      });
+    }).then(done).catch(done);
   }
 
   /* ======================== day editors =============================== */
@@ -3601,11 +3628,32 @@
    * showing "搜索中…" instead of hanging forever.
    */
   function geocodeCity(q) {
-    if (typeof SERVICES === 'undefined' || typeof SERVICES.searchGeocode !== 'function') {
-      return Promise.reject(new Error('搜索服务不可用'));
+    if (typeof SERVICES === 'undefined') return Promise.reject(new Error('搜索服务不可用'));
+    // query two independent geocoders in parallel and merge — if one is slow,
+    // blocked or empty, the other still returns cities
+    const calls = [];
+    if (typeof SERVICES.searchGeocode === 'function') {
+      calls.push(Promise.resolve().then(function () { return SERVICES.searchGeocode(q); })
+        .catch(function () { return []; }));
     }
-    try { return Promise.resolve(SERVICES.searchGeocode(q)); }
-    catch (e) { return Promise.reject(e); }
+    if (typeof SERVICES.searchOsm === 'function') {
+      calls.push(Promise.resolve().then(function () { return SERVICES.searchOsm(q); })
+        .catch(function () { return []; }));
+    }
+    if (!calls.length) return Promise.reject(new Error('搜索服务不可用'));
+    return Promise.all(calls).then(function (lists) {
+      const out = [], seen = {};
+      lists.forEach(function (l) {
+        (l || []).forEach(function (c) {
+          if (!c || c.lat == null || c.lng == null) return;
+          const k = String(c.name).toLowerCase();
+          if (seen[k]) return;
+          seen[k] = 1;
+          out.push(c);
+        });
+      });
+      return out;
+    });
   }
 
   function renderCityResults(list) {
@@ -3675,8 +3723,9 @@
               if (mine !== seq) return;
               cityResults = list || [];
               renderCityResults(cityResults);
-            }).catch(function () {
-              if (mine === seq) box.innerHTML = '<div class="egroup-empty">搜索失败，请重试</div>';
+            }).catch(function (err) {
+              if (mine === seq) box.innerHTML = '<div class="egroup-empty">搜索失败：' +
+                esc((err && err.message) || '网络错误') + '，请重试</div>';
             });
           }, 380);
         });
@@ -3819,8 +3868,9 @@
                     esc(c.note || '') + '</span></span>' +
                   '<span class="cs-go">' + icon('plus') + '</span></button>';
               }).join('') : '<div class="egroup-empty">没找到</div>';
-            }).catch(function () {
-              if (mine === seq) $('#adCityRes').innerHTML = '<div class="egroup-empty">搜索失败</div>';
+            }).catch(function (err) {
+              if (mine === seq) $('#adCityRes').innerHTML = '<div class="egroup-empty">搜索失败：' +
+                esc((err && err.message) || '网络错误') + '</div>';
             });
           }, 380);
         });
@@ -5242,6 +5292,9 @@
       const pr = t.closest('[data-print]');
       if (pr) { window.print(); return; }
 
+      const swUp = t.closest('[data-sw-update]');
+      if (swUp) { forceUpdate(); return; }
+
       const rs = t.closest('[data-reset]');
       if (rs) {
         openSheet('清空本地数据', '不可撤销', 
@@ -5376,15 +5429,36 @@
     window.addEventListener('offline', off);
     off();
 
-    // service worker
+    // service worker: register, look for updates, and adopt a new version at
+    // once. Without this a phone can keep serving a stale cached shell, which
+    // makes a shipped fix look like it never arrived.
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      const hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        // a new worker took over → reload once so the fresh shell is used
+        if (hadController) location.reload();
+      });
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').catch(function () {});
+        navigator.serviceWorker.register('sw.js').then(function (reg) {
+          reg.update().catch(function () {});
+          const promote = function (w) {
+            if (w && w.state === 'installed' && navigator.serviceWorker.controller) {
+              w.postMessage('skipWaiting');
+            }
+          };
+          promote(reg.waiting);
+          reg.addEventListener('updatefound', function () {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', function () { promote(nw); });
+          });
+        }).catch(function () {});
       });
     }
 
     // expose a little for debugging
-    window.__swissTrip = { state, DAYS, HOTELS, BOOKINGS, setView, selectDay };
+    window.__swissTrip = { state, DAYS, HOTELS, BOOKINGS, setView, selectDay,
+      version: APP_VERSION };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
