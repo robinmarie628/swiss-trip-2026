@@ -516,6 +516,8 @@
       lng: spot.lng,
       best: spot.best || '',
       tip: spot.tip || '',
+      // links this spot to its image blob in IndexedDB (local-only, never synced)
+      photoId: spot.photoId || null,
     });
     save();
   }

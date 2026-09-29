@@ -803,8 +803,19 @@
   }
 
   /** red camera pin — photo spots are a different shape and colour from the
-      numbered stop pins so they never read as part of the walking route */
-  function makePhotoPin() {
+      numbered stop pins so they never read as part of the walking route. When a
+      spot carries its own photo (stored in IndexedDB) we draw the photo itself
+      as a round thumbnail instead, so the capture is visible at a glance. */
+  function makePhotoPin(s) {
+    if (s && s._photoUrl) {
+      return L.divIcon({
+        className: '',
+        html: '<div class="pin photo thumb" style="background-image:url(\'' + s._photoUrl + '\')"></div>',
+        iconSize: [30, 30],
+        iconAnchor: [15, 33],
+        popupAnchor: [0, -31],
+      });
+    }
     return L.divIcon({
       className: '',
       html: '<div class="pin photo">' +
@@ -821,7 +832,9 @@
 
   function photoPopupHtml(s) {
     const u = navUrl(s.lat, s.lng, s.name);
-    return '<b>' + esc(s.name) + '</b>' +
+    const img = (s && s._photoUrl) ? '<img class="pop-photo" src="' + s._photoUrl + '" alt="' + esc(s.name) + '">' : '';
+    return img +
+      '<b>' + esc(s.name) + '</b>' +
       (s.nameDe || s.nameEn ? '<div class="pop-sub">' + esc(deEn(s.nameDe, s.nameEn)) + '</div>' : '') +
       (s.best ? '<div class="pop-note">最佳时机 · ' + esc(s.best) + '</div>' : '') +
       (s.tip ? '<div class="pop-note">' + esc(s.tip) + '</div>' : '') +
@@ -841,10 +854,29 @@
   }
 
   /** the action sheet behind a photo spot — reachable from the map list */
-  function photoSheet(s) {
+  /**
+   * The action sheet behind a photo spot. For spots that carry a photo (taken
+   * with the camera / uploaded), the image is pulled from IndexedDB and shown
+   * at the top so the capture is visible without leaving the sheet.
+   */
+  async function photoSheet(s) {
     const u = navUrl(s.lat, s.lng, s.name);
     const dn = s.day ? (DAYS.filter(function (d) { return d.id === s.day; })[0] || null) : null;
+
+    let photoHtml = '';
+    if (s.photoId && typeof IDB !== 'undefined') {
+      try {
+        const items = await IDB.all();
+        const it = items.filter(function (x) { return x.id === s.photoId; })[0];
+        if (it) {
+          photoHtml = '<div class="sheet-photo"><img src="' + URL.createObjectURL(it.blob) +
+            '" alt="' + esc(s.name) + '"></div>';
+        }
+      } catch (e) {}
+    }
+
     openSheet(s.name, [deEn(s.nameDe, s.nameEn), dn ? dn.dow + ' · ' + dn.title : '通用'].filter(Boolean).join(' · '),
+      photoHtml +
       (s.best ? '<div class="photo-tip"><b>最佳时机</b><span>' + esc(s.best) + '</span></div>' : '') +
       (s.tip ? '<div class="photo-tip"><b>小贴士</b><span>' + esc(s.tip) + '</span></div>' : '') +
       '<div class="btn-row" style="display:grid;gap:9px;margin-top:14px">' +
@@ -1425,13 +1457,34 @@
 
     // photo spots are drawn last so they sit above the route lines
     const spots = photoSpotsInView(days);
+    const needPhoto = [];
     spots.forEach(function (s) {
-      const mk = L.marker([s.lat, s.lng], { icon: makePhotoPin(), zIndexOffset: 400 })
+      const mk = L.marker([s.lat, s.lng], { icon: makePhotoPin(s), zIndexOffset: 400 })
         .addTo(overlayGroup)
         .bindPopup(photoPopupHtml(s));
+      s._marker = mk;
       indexMarker(mk, s.lat, s.lng, s.name);
       allPts.push([s.lat, s.lng]);
+      if (s.photoId) needPhoto.push(s);
     });
+
+    // user-taken photos live in IndexedDB (never in the sync payload); load them
+    // after the markers are placed and swap the camera icon for a thumbnail,
+    // and the popup for one that shows the photo in a small box.
+    if (needPhoto.length) {
+      IDB.all().then(function (items) {
+        const byId = {};
+        items.forEach(function (it) { byId[it.id] = it; });
+        needPhoto.forEach(function (s) {
+          const it = byId[s.photoId];
+          if (!it || !s._marker) return;
+          if (s._photoUrl) URL.revokeObjectURL(s._photoUrl);
+          s._photoUrl = URL.createObjectURL(it.blob);
+          s._marker.setIcon(makePhotoPin(s));
+          s._marker.setPopupContent(photoPopupHtml(s));
+        });
+      }).catch(function () {});
+    }
 
     if (allPts.length) {
       try {
@@ -3067,64 +3120,192 @@
       }).join('');
   }
 
+  /**
+   * Add a photo spot. The primary path reads the device GPS, then lets you
+   * either shoot a photo (rear camera) or pick one from the gallery — the image
+   * is stored in IndexedDB and shown as a small thumbnail pin on the map, and
+   * tapping the pin previews it in a small popup box. A legacy "search a place
+   * by name" path is kept below for adding a known viewpoint.
+   */
   function openPhotoAdd() {
     const day = DAYS[state.sel];
+    const st = { lat: null, lng: null, blob: null, url: null };
+    let searchTimer = null, searchSeq = 0;
     phResults = [];
-    let timer = null;
-    let seq = 0;
 
     openSheet('添加拍照点', day.dow + ' · ' + day.title,
-      '<div class="field"><label>搜索地点</label>' +
-        '<input id="phQuery" type="search" placeholder="Bachalpsee / 观景台 / 车站名" ' +
-          'autocomplete="off" autocapitalize="off">' +
+      // ---- Section A: current location + photo (primary) ----
+      '<div class="pa-card">' +
+        '<div class="pa-h">' + icon('camera') + '用当前位置 + 照片</div>' +
+        '<button class="btn block primary" id="paLoc">' + icon('pin') + '读取我的位置（GPS）</button>' +
+        '<div id="paLocMsg" class="pa-msg" style="display:none"></div>' +
+        '<div id="paManual" style="display:none">' +
+          '<div class="pa-row2">' +
+            '<div class="field" style="margin:0"><input id="paLat" type="number" step="any" ' +
+              'placeholder="纬度 lat" inputmode="decimal"></div>' +
+            '<div class="field" style="margin:0"><input id="paLng" type="number" step="any" ' +
+              'placeholder="经度 lng" inputmode="decimal"></div>' +
+          '</div>' +
+          '<button class="btn block" id="paManualOk">用这个坐标</button>' +
+        '</div>' +
+        '<div id="paStep2" style="display:none">' +
+          '<div class="pa-row2">' +
+            '<button class="btn block" id="paCam">' + icon('camera') + '拍照</button>' +
+            '<button class="btn block" id="paUp">' + icon('upload') + '上传</button>' +
+          '</div>' +
+          '<div class="pa-hint">「拍照」调用后置摄像头；「上传」从相册或文件选择。</div>' +
+        '</div>' +
+        '<div id="paStep3" style="display:none">' +
+          '<div class="pa-prev"><img id="paPrevImg" alt="预览"></div>' +
+          '<div class="field"><label>名称（可选）</label>' +
+            '<input id="paName" type="text" placeholder="例如 湖边日落"></div>' +
+          '<div class="field"><label>拍摄备注（可选）</label>' +
+            '<input id="paTip" type="text" placeholder="例如 清晨逆光"></div>' +
+          '<button class="btn block primary" id="paSave">' + icon('check') + '保存拍照点</button>' +
+        '</div>' +
       '</div>' +
-      '<div id="phResults"><div class="egroup-empty">输入至少 2 个字开始搜索</div></div>' +
+      // ---- Section B: search a place by name (legacy) ----
       '<div class="sheet-sep"></div>' +
-      '<div class="field"><label>拍摄备注（可选）</label>' +
-        '<input id="phTip" type="text" placeholder="例如 清晨逆光，用长焦压缩">' +
-      '</div>' +
-      '<div style="font-size:11.5px;line-height:1.65;color:var(--muted)">' +
-        '选一个地点就会在地图上标成红色相机图标，只属于这一天。' +
-      '</div>',
+      '<details class="pa-more" id="paSearch">' +
+        '<summary>或者按名称搜索地点添加</summary>' +
+        '<div class="field"><label>搜索地点</label>' +
+          '<input id="phQuery" type="search" placeholder="Bachalpsee / 观景台 / 车站名" ' +
+            'autocomplete="off" autocapitalize="off"></div>' +
+        '<div id="phResults"><div class="egroup-empty">输入至少 2 个字开始搜索</div></div>' +
+      '</details>',
       function () {
-        const q = $('#phQuery');
-        if (!q) return;
-        q.focus();
-        q.addEventListener('input', function () {
-          clearTimeout(timer);
-          const v = q.value.trim();
-          const mine = ++seq;
-          if (v.length < 2) {
-            $('#phResults').innerHTML = '<div class="egroup-empty">输入至少 2 个字开始搜索</div>';
-            return;
-          }
-          $('#phResults').innerHTML = '<div class="egroup-empty">搜索中…</div>';
-          timer = setTimeout(function () {
-            SERVICES.searchPlacesStreaming(v, function (list, finished) {
-              if (mine !== seq) return;
-              phResults = list;
-              renderPhResults(list, !finished);
-            });
-          }, 380);
+        const $loc = $('#paLoc');
+        if ($loc) $loc.addEventListener('click', readLoc);
+
+        const $manualOk = $('#paManualOk');
+        if ($manualOk) $manualOk.addEventListener('click', function () {
+          const la = parseFloat(($('#paLat') || {}).value);
+          const ln = parseFloat(($('#paLng') || {}).value);
+          if (isNaN(la) || isNaN(ln)) { paMsg('请填写有效的纬度和经度', 'err'); return; }
+          st.lat = la; st.lng = ln; revealStep2();
         });
 
-        $('#phResults').addEventListener('click', function (ev) {
-          const b = ev.target.closest('[data-ph-add]');
-          if (!b) return;
-          const p = phResults[Number(b.dataset.phAdd)];
-          if (!p) return;
-          STORE.addPhotoSpot({
-            day: day.id, region: day.region,
-            name: p.name, nameEn: p.nameEn,
-            lat: p.lat, lng: p.lng,
-            tip: ($('#phTip') || {}).value.trim(), best: '',
-          });
-          closeSheet();
-          refreshAfterEdit();
-          if (state.mapReady) renderMapContent();
-          toast('已添加拍照点「' + p.name + '」');
-        });
+        const $cam = $('#paCam');
+        if ($cam) $cam.addEventListener('click', function () { pickPhotoFile(true); });
+        const $up = $('#paUp');
+        if ($up) $up.addEventListener('click', function () { pickPhotoFile(false); });
+
+        const $save = $('#paSave');
+        if ($save) $save.addEventListener('click', savePhotoSpot);
+
+        wirePhotoSearch();
       }, 'place');
+
+    function paMsg(txt, kind) {
+      const m = $('#paLocMsg');
+      if (!m) return;
+      m.textContent = txt;
+      m.style.display = 'block';
+      m.className = 'pa-msg' + (kind ? ' ' + kind : '');
+    }
+
+    function revealStep2() {
+      const b = $('#paStep2'); if (b) b.style.display = 'block';
+      const mm = $('#paManual'); if (mm) mm.style.display = 'none';
+    }
+
+    function readLoc() {
+      if (!('geolocation' in navigator)) {
+        paMsg('此设备不支持定位。可手动填写坐标，或用下方按名称搜索。', 'err');
+        const mm = $('#paManual'); if (mm) mm.style.display = 'block';
+        return;
+      }
+      const btn = $('#paLoc');
+      if (btn) { btn.disabled = true; btn.innerHTML = '定位中…'; }
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        st.lat = pos.coords.latitude; st.lng = pos.coords.longitude;
+        if (btn) btn.style.display = 'none';
+        paMsg('已定位 ✓  ' + st.lat.toFixed(5) + ', ' + st.lng.toFixed(5), 'ok');
+        revealStep2();
+      }, function (err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = icon('pin') + '重新读取位置'; }
+        paMsg('无法获取定位（' + (err && err.message ? err.message : '已拒绝权限') +
+          '）。可手动填写坐标，或用下方按名称搜索。', 'err');
+        const mm = $('#paManual'); if (mm) mm.style.display = 'block';
+      }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+    }
+
+    function pickPhotoFile(camera) {
+      if (st.lat == null || st.lng == null) { paMsg('请先定位再选照片', 'err'); return; }
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'image/*';
+      if (camera) inp.setAttribute('capture', 'environment');
+      inp.addEventListener('change', function () {
+        const f = inp.files && inp.files[0];
+        if (!f) return;
+        if (st.url) URL.revokeObjectURL(st.url);
+        st.blob = f;
+        st.url = URL.createObjectURL(f);
+        const img = $('#paPrevImg');
+        if (img) img.src = st.url;
+        const s3 = $('#paStep3'); if (s3) s3.style.display = 'block';
+      });
+      inp.click();
+    }
+
+    function savePhotoSpot() {
+      if (st.lat == null || st.lng == null) { toast('请先定位'); return; }
+      if (!st.blob) { toast('请先拍照或上传照片'); return; }
+      const name = (($('#paName') || {}).value || '').trim();
+      const tip = (($('#paTip') || {}).value || '').trim();
+      const photoId = 'ph' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      IDB.put({ id: photoId, name: name || '拍照点', blob: st.blob, ts: Date.now() }).then(function () {
+        STORE.addPhotoSpot({
+          day: day.id, region: day.region,
+          name: name || ('我的拍照点 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })),
+          nameEn: '', lat: st.lat, lng: st.lng, best: '', tip: tip, photoId: photoId,
+        });
+        if (st.url) { URL.revokeObjectURL(st.url); st.url = null; }
+        closeSheet();
+        refreshAfterEdit();
+        if (state.mapReady) renderMapContent();
+        toast('已添加拍照点');
+      });
+    }
+
+    function wirePhotoSearch() {
+      const q = $('#phQuery');
+      if (!q) return;
+      q.addEventListener('input', function () {
+        clearTimeout(searchTimer);
+        const v = q.value.trim();
+        const mine = ++searchSeq;
+        if (v.length < 2) {
+          $('#phResults').innerHTML = '<div class="egroup-empty">输入至少 2 个字开始搜索</div>';
+          return;
+        }
+        $('#phResults').innerHTML = '<div class="egroup-empty">搜索中…</div>';
+        searchTimer = setTimeout(function () {
+          SERVICES.searchPlacesStreaming(v, function (list, finished) {
+            if (mine !== searchSeq) return;
+            phResults = list;
+            renderPhResults(list, !finished);
+          });
+        }, 380);
+      });
+      $('#phResults').addEventListener('click', function (ev) {
+        const b = ev.target.closest('[data-ph-add]');
+        if (!b) return;
+        const p = phResults[Number(b.dataset.phAdd)];
+        if (!p) return;
+        STORE.addPhotoSpot({
+          day: day.id, region: day.region,
+          name: p.name, nameEn: p.nameEn,
+          lat: p.lat, lng: p.lng,
+          tip: (($('#paTip') || {}).value || '').trim(), best: '',
+        });
+        closeSheet();
+        refreshAfterEdit();
+        if (state.mapReady) renderMapContent();
+        toast('已添加拍照点「' + p.name + '」');
+      });
+    }
   }
 
   function trExternal(which) {
