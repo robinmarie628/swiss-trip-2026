@@ -2,7 +2,7 @@
   "app": "swiss-trip-workbench",
   "kind": "sync",
   "version": 1,
-  "syncedAt": "2026-09-29T14:28:59.497Z",
+  "syncedAt": "2026-09-29T23:40:26.475Z",
   "user": {
     "version": 1,
     "places": {
@@ -268,6 +268,51 @@
     "photoSpots": [],
     "hiddenPhotos": [],
     "photoVisible": true,
+    "dayMeta": {
+      "d7": {
+        "region": "geneva",
+        "weatherPlace": "geneva"
+      },
+      "d8": {
+        "region": "geneva",
+        "weatherPlace": "geneva"
+      },
+      "xmuna1s3492c": {
+        "region": "czvg1ig",
+        "weatherPlace": "czvg1ig"
+      }
+    },
+    "extraDays": [
+      {
+        "id": "xmuna1s3492c",
+        "date": "2026-10-12",
+        "dow": "周一",
+        "dowEn": "MON 12 OCT",
+        "region": "czvg1ig",
+        "weatherPlace": "czvg1ig",
+        "title": "北京温暖的家",
+        "titleEn": "Home",
+        "headline": "",
+        "stat": "",
+        "summary": "睡大觉，倒时差",
+        "blocks": [],
+        "transport": [],
+        "hotelId": null,
+        "places": [],
+        "tips": []
+      }
+    ],
+    "customCities": {
+      "czvg1ig": {
+        "label": "北京",
+        "labelEn": "北京",
+        "lat": 39.9075,
+        "lng": 116.39723,
+        "elev": "",
+        "color": "#5A6572",
+        "soft": "#EDEFF2"
+      }
+    },
     "order": {
       "d1": {
         "p": [
