@@ -26,10 +26,14 @@
       photoSpots: [],    // user-added photo spots
       hiddenPhotos: [],  // curated photo-spot ids the user hid
       photoVisible: true,
-      dayMeta: {},       // dayId -> { region, weatherPlace, title, titleEn }
+      dayMeta: {},       // dayId -> { region, weatherPlace, title, titleEn, summary }
                         //   user overrides for a day's city/route, applied on
                         //   top of data.js so the weather city + the itinerary
                         //   / map city names can be changed in sync ("换城市")
+      extraDays: [],     // user-added days, appended to DAYS and sorted by date
+      customCities: {},  // cityKey -> { label, labelEn, lat, lng, color, soft }
+                        //   cities the traveller searched for, registered into
+                        //   REGIONS + WEATHER_PLACES on every apply()
       order: {},         // dayId -> { b: [key], p: [key], t: [key] }
       sortMode: {},      // dayId -> { b|p|t: 'manual' }  (absent => 'auto')
       geoCache: {},      // 'lat,lng' -> reverse-geocoded address
@@ -43,6 +47,7 @@
 
   let data = blank();
   let base = null;                 // pristine snapshot of data.js day content
+  let baseIds = [];                // ids of the days that came from data.js
   const subs = [];
 
   /* ---------- stable keys for hiding base items ---------------------- */
@@ -58,18 +63,33 @@
     return String(item.time) + '|' + String(item.label);
   }
 
-  function snapshot() {
-    if (base) return;
-    base = DAYS.map(function (d) {
-      return {
+  /* Base content is keyed by day id (not index) so days can be inserted,
+     removed and re-sorted by date without desyncing the snapshot. */
+  function baseFor(d) {
+    if (!base) base = {};
+    if (!base[d.id]) {
+      base[d.id] = {
         places: (d.places || []).slice(),
         transport: (d.transport || []).slice(),
         blocks: (d.blocks || []).slice(),
         // base day meta so a cleared override can be restored on re-apply
         region: d.region, weatherPlace: d.weatherPlace,
-        title: d.title, titleEn: d.titleEn,
+        title: d.title, titleEn: d.titleEn, summary: d.summary,
       };
-    });
+    }
+    return base[d.id];
+  }
+
+  function snapshot() {
+    if (base) return;
+    base = {};
+    baseIds = [];
+    DAYS.forEach(function (d) { baseFor(d); baseIds.push(d.id); });
+  }
+
+  /** chronological comparator for days */
+  function byDate(a, b) {
+    return a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
   }
 
   /* ---------- persistence -------------------------------------------- */
@@ -81,15 +101,22 @@
         const parsed = JSON.parse(raw);
         data = Object.assign(blank(), parsed || {});
         ['places', 'legs', 'blocks', 'hidden', 'order', 'sortMode', 'geoCache',
-          'legEdits', 'placeTimes']
+          'legEdits', 'placeTimes', 'dayMeta', 'customCities']
           .forEach(function (k) {
             if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {};
           });
-        ['photoSpots', 'hiddenPhotos'].forEach(function (k) {
+        ['photoSpots', 'hiddenPhotos', 'extraDays'].forEach(function (k) {
           if (!Array.isArray(data[k])) data[k] = [];
         });
       }
     } catch (e) { data = blank(); }
+
+    // re-attach days the traveller added, then keep the whole list in date order
+    data.extraDays.forEach(function (d) {
+      if (!DAYS.some(function (x) { return x.id === d.id; })) DAYS.push(d);
+    });
+    DAYS.sort(byDate);
+
     apply();
     return data;
   }
@@ -191,7 +218,7 @@
     snapshot();
     const d = DAYS[i];
     const id = d.id;
-    const b = base[i];
+    const b = baseFor(d);
     const hidden = data.hidden[id] || [];
     const ord = data.order[id] || {};
 
@@ -297,9 +324,38 @@
     });
   }
 
+  /**
+   * Cities the traveller searched for are registered as first-class theme
+   * regions and weather query points, so regionOf(day) / WEATHER.placeFor(day)
+   * work on them with no special-casing anywhere else.
+   */
+  function registerCustomCities() {
+    if (typeof REGIONS === 'undefined') return;
+    Object.keys(data.customCities).forEach(function (key) {
+      const c = data.customCities[key];
+      REGIONS[key] = { label: c.label, labelEn: c.labelEn || c.label, color: c.color, soft: c.soft };
+      if (typeof WEATHER_PLACES !== 'undefined') {
+        WEATHER_PLACES[key] = { lat: c.lat, lng: c.lng, label: c.label, elev: c.elev || '' };
+      }
+    });
+  }
+
   /** write the merged content back into DAYS so all renderers see it */
   function apply() {
     snapshot();
+    registerCustomCities();
+    // traveller-added days must always be present, in date order — this keeps
+    // a pulled/synced payload correct without a separate rebuild step. Drop any
+    // extra day a pull removed, then re-attach the current set.
+    const extraIds = data.extraDays.map(function (d) { return d.id; });
+    for (let i = DAYS.length - 1; i >= 0; i--) {
+      const id = DAYS[i].id;
+      if (baseIds.indexOf(id) < 0 && extraIds.indexOf(id) < 0) DAYS.splice(i, 1);
+    }
+    data.extraDays.forEach(function (d) {
+      if (!DAYS.some(function (x) { return x.id === d.id; })) DAYS.push(d);
+    });
+    DAYS.sort(byDate);
     DAYS.forEach(function (d, i) {
       const r = resolved(i);
       d.places = r.places;
@@ -307,24 +363,29 @@
       d.blocks = r.blocks;
       // "换城市": a user override can repoint a day's region (itinerary / map
       // city label + colour) and weatherPlace (the city weather is read from),
-      // plus optionally its route title — all in sync. Reset to base first so a
+      // plus its route title and summary — all in sync. Reset to base first so a
       // cleared override restores the original value rather than lingering.
-      d.region = base[i].region;
-      d.weatherPlace = base[i].weatherPlace;
-      d.title = base[i].title;
-      d.titleEn = base[i].titleEn;
+      const b = baseFor(d);
+      d.region = b.region;
+      d.weatherPlace = b.weatherPlace;
+      d.title = b.title;
+      d.titleEn = b.titleEn;
+      d.summary = b.summary;
       const m = data.dayMeta[d.id];
       if (m) {
         if (m.region != null) d.region = m.region;
         if (m.weatherPlace != null) d.weatherPlace = m.weatherPlace;
         if (m.title != null) d.title = m.title;
         if (m.titleEn != null) d.titleEn = m.titleEn;
+        if (m.summary != null) d.summary = m.summary;
       }
     });
   }
 
   /* ---------- day meta ("换城市") ------------------------------------- */
-  /** per-day overrides of region / weatherPlace / title / titleEn.
+  const META_KEYS = ['region', 'weatherPlace', 'title', 'titleEn', 'summary'];
+
+  /** per-day overrides of region / weatherPlace / title / titleEn / summary.
       Returns a fresh copy so callers can't mutate the store directly. */
   function getDayMeta(dayId) {
     const m = data.dayMeta[dayId];
@@ -334,13 +395,12 @@
   /**
    * Merge an override into a day's meta. Pass null for a field to clear it
    * (revert to the data.js base value); pass an empty object to wipe all.
-   * Supported keys: region, weatherPlace, title, titleEn.
    */
   function setDayMeta(dayId, patch) {
     if (!data.dayMeta[dayId]) data.dayMeta[dayId] = {};
     const cur = data.dayMeta[dayId];
     Object.keys(patch || {}).forEach(function (k) {
-      if (k === 'region' || k === 'weatherPlace' || k === 'title' || k === 'titleEn') {
+      if (META_KEYS.indexOf(k) >= 0) {
         if (patch[k] == null) delete cur[k];
         else cur[k] = patch[k];
       }
@@ -349,6 +409,75 @@
     save();
     apply();
     return cur;
+  }
+
+  /* ---------- custom cities (searched) -------------------------------- */
+  function customCities() { return data.customCities; }
+
+  /** register (or update) a searched city so it becomes a region + weather point */
+  function setCustomCity(key, def) {
+    data.customCities[key] = {
+      label: def.label, labelEn: def.labelEn || def.label,
+      lat: def.lat, lng: def.lng, elev: def.elev || '',
+      color: def.color, soft: def.soft,
+    };
+    save();
+    apply();
+    return data.customCities[key];
+  }
+
+  /* ---------- user-added days ----------------------------------------- */
+  function isExtraDay(dayId) {
+    return data.extraDays.some(function (d) { return d.id === dayId; });
+  }
+
+  /** append a traveller-authored day, keeping the whole list in date order */
+  function addDay(day) {
+    // a random suffix so two days added in the same millisecond stay distinct
+    const id = day.id || ('x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5));
+    const d = {
+      id: id,
+      date: day.date,
+      dow: day.dow || '',
+      dowEn: day.dowEn || '',
+      region: day.region || 'transit',
+      weatherPlace: day.weatherPlace || 'gva',
+      title: day.title || '新的一天',
+      titleEn: day.titleEn || '',
+      headline: day.headline || '',
+      stat: day.stat || '',
+      summary: day.summary || '',
+      blocks: day.blocks || [],
+      transport: day.transport || [],
+      hotelId: day.hotelId || null,
+      places: day.places || [],
+      tips: day.tips || [],
+    };
+    snapshot();                       // capture base from the pre-existing days
+    data.extraDays.push(d);
+    DAYS.push(d);
+    DAYS.sort(byDate);
+    baseFor(d);                       // seed the snapshot for this new day
+    save();
+    apply();
+    return d;
+  }
+
+  /** remove a traveller-authored day (base days cannot be removed) */
+  function removeDay(dayId) {
+    const i = data.extraDays.map(function (d) { return d.id; }).indexOf(dayId);
+    if (i < 0) return false;
+    data.extraDays.splice(i, 1);
+    const j = DAYS.map(function (d) { return d.id; }).indexOf(dayId);
+    if (j >= 0) DAYS.splice(j, 1);
+    if (base) delete base[dayId];
+    ['places', 'legs', 'blocks', 'hidden', 'legEdits', 'placeTimes',
+      'order', 'sortMode', 'dayMeta'].forEach(function (k) {
+      if (data[k]) delete data[k][dayId];
+    });
+    save();
+    apply();
+    return true;
   }
 
   /* ---------- mutations ---------------------------------------------- */
@@ -639,6 +768,8 @@
     load: load, save: save, onChange: onChange,
     resolved: resolved, apply: apply,
     getDayMeta: getDayMeta, setDayMeta: setDayMeta,
+    customCities: customCities, setCustomCity: setCustomCity,
+    addDay: addDay, removeDay: removeDay, isExtraDay: isExtraDay,
     addPlace: addPlace, addLeg: addLeg, addBlock: addBlock,
     updateLeg: updateLeg,
     placeTime: placeTime, setPlaceTime: setPlaceTime,

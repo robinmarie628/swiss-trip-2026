@@ -359,14 +359,16 @@
           '<span class="tag" style="background:' + r.color + 'cc;border-color:' + r.color + '">' +
             esc(r.label) + '</span>' +
         '</div>' +
-        '<div class="hero-route">' + esc(day.title) +
-          '<span class="arrow">·</span><span class="en">' + esc(day.titleEn) + '</span>' +
+        '<div class="hero-route"><span class="hr-tx">' + esc(day.title) +
+          '<span class="arrow">·</span><span class="en">' + esc(day.titleEn) + '</span></span>' +
+          '<button class="hero-edit" data-day-meta="1" aria-label="编辑这一天的城市与文字">' +
+            icon('edit') + '</button>' +
         '</div>' +
         '<div class="hero-sum">' + esc(day.summary) + '</div>' +
         (typeof WEATHER !== 'undefined'
           ? '<div class="wx-wrap"><div class="wx-head">' +
               '<span class="wx-head-t">' + icon('sun') + '天气</span>' +
-              '<button class="wx-swap" data-wx-swap="1">换城市</button>' +
+              '<button class="wx-swap" data-day-meta="1">' + icon('edit') + '换城市</button>' +
             '</div>' + WEATHER.panelHtml(day) + '</div>'
           : '') +
         '<div class="hero-stats">' +
@@ -394,7 +396,11 @@
         '<div class="n">' + pad2(di.day) + '</div>' +
         '<div class="m">' + di.short + '</div>' +
       '</button>';
-    }).join('');
+    }).join('') +
+      '<button class="dchip dchip-add" data-add-day="1" aria-label="添加一天">' +
+        '<div class="dchip-plus">' + icon('plus') + '</div>' +
+        '<div class="m">添加一天</div>' +
+      '</button>';
   }
 
   /* ======================== shared sections =========================== */
@@ -3520,35 +3526,54 @@
     }
   }
 
-  /* ---- change city ("换城市") --------------------------------------- */
+  /* ---- edit this day: city (searchable) + route title + summary ------ */
   // each weather query point implies the region whose label + colour the
   // itinerary and map use, so swapping to a city updates both in sync.
   const WP_REGION = {
     geneva: 'geneva', grindelwald: 'alps', first: 'alps',
     wengen: 'valley', zurich: 'zurich', rheinfall: 'zurich', gva: 'transit',
   };
+  // a searched city gets a theme colour picked from this palette (stable per city)
+  const CITY_PALETTE = [
+    { color: '#2E7D9A', soft: '#E6F1F5' }, { color: '#1F6F4A', soft: '#E5F2EC' },
+    { color: '#3B6EA5', soft: '#E7EEF7' }, { color: '#6B4E9E', soft: '#EFEAF7' },
+    { color: '#B5651D', soft: '#F7EFE6' }, { color: '#A03A5A', soft: '#F7E9EE' },
+    { color: '#4C7A6B', soft: '#E8F1EE' }, { color: '#5A6572', soft: '#EDEFF2' },
+  ];
 
-  function cityOptions() {
-    if (typeof WEATHER_PLACES === 'undefined') return [];
-    return Object.keys(WEATHER_PLACES).map(function (place) {
-      const wp = WEATHER_PLACES[place];
-      const region = WP_REGION[place] || 'transit';
-      const rg = REGIONS[region] || REGIONS.transit;
-      return {
-        place: place, wLabel: wp.label, wElev: wp.elev || '',
-        region: region, rLabel: rg.label, rColor: rg.color,
-      };
-    });
+  /** stable id for a searched city, derived from its coordinates */
+  function cityKeyFor(lat, lng) {
+    const s = Number(lat).toFixed(4) + ',' + Number(lng).toFixed(4);
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return 'c' + h.toString(36);
+  }
+  function cityPaletteFor(key) {
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    return CITY_PALETTE[h % CITY_PALETTE.length];
   }
 
-  /** open the "换城市" picker for the currently selected day */
-  function openCitySwap() {
-    if (typeof WEATHER === 'undefined') return;
-    const day = DAYS[state.sel];
-    const opts = cityOptions();
-    const rows = opts.map(function (o) {
+  function predefinedCityOptions() {
+    if (typeof WEATHER_PLACES === 'undefined') return [];
+    return Object.keys(WP_REGION).filter(function (p) { return WEATHER_PLACES[p]; })
+      .map(function (place) {
+        const wp = WEATHER_PLACES[place], region = WP_REGION[place];
+        const rg = REGIONS[region] || REGIONS.transit;
+        return {
+          place: place, wLabel: wp.label, wElev: wp.elev || '',
+          region: region, rLabel: rg.label, rColor: rg.color,
+        };
+      });
+  }
+
+  /** the city block: current city, a search box, and the common cities */
+  function citySectionHtml(day) {
+    const r = regionOf(day);
+    const wp = (typeof WEATHER !== 'undefined' ? WEATHER.placeFor(day) : null);
+    const rows = predefinedCityOptions().map(function (o) {
       const on = (o.region === day.region && o.place === day.weatherPlace);
-      return '<button class="cs-row' + (on ? ' is-on' : '') + '" data-cs="' + o.place + '" ' +
+      return '<button class="cs-row' + (on ? ' is-on' : '') + '" data-city-pre="' + o.place + '" ' +
           'style="--c:' + o.rColor + '">' +
         '<span class="cs-dot" style="background:' + o.rColor + '"></span>' +
         '<span class="cs-tx"><b>' + esc(o.rLabel) + '</b>' +
@@ -3557,26 +3582,267 @@
       '</button>';
     }).join('');
 
-    openSheet('换城市', day.dow + ' · ' + day.title,
-      '<div class="cs-note">天气不好时可把这一天的城市整体换掉 —— 天气读取的城市、' +
-        '行程与地图上显示的城市名称会<b>联动</b>改变。</div>' +
-      '<div class="cs-list">' + rows + '</div>', null, 'weather');
+    return '<div class="cs-cur" style="--c:' + r.color + '">' +
+        '<span class="cs-dot" style="background:' + r.color + '"></span>' +
+        '<span class="cs-tx"><b>' + esc(r.label) + '</b>' +
+          '<span>当前城市 · 天气读取：' + esc((wp && wp.label) || r.label) + '</span></span>' +
+      '</div>' +
+      '<div class="field" style="margin-top:10px"><label>搜索城市（任意城市）</label>' +
+        '<input id="dmCityQ" type="search" placeholder="例如 卢塞恩 / Lucerne / Interlaken" ' +
+          'autocomplete="off" autocapitalize="off"></div>' +
+      '<div id="dmCityRes" class="cs-res"></div>' +
+      '<div class="cs-sub">或选择常用城市</div>' +
+      '<div class="cs-list">' + rows + '</div>';
   }
 
-  /** apply a city swap: repoint region + weatherPlace for the day, then repaint */
-  function applyCitySwap(place) {
+  function renderCityResults(list) {
+    const box = $('#dmCityRes');
+    if (!box) return;
+    if (!list || !list.length) {
+      box.innerHTML = '<div class="egroup-empty">没找到，换个关键词</div>';
+      return;
+    }
+    box.innerHTML = list.map(function (c, i) {
+      return '<button class="cs-row" data-city-new="' + i + '">' +
+        '<span class="cs-dot" style="background:var(--faint)"></span>' +
+        '<span class="cs-tx"><b>' + esc(c.name) + '</b><span>' +
+          esc(c.note || '') + ' · ' + c.lat.toFixed(3) + ', ' + c.lng.toFixed(3) +
+        '</span></span>' +
+        '<span class="cs-go">' + icon('plus') + '</span></button>';
+    }).join('');
+  }
+
+  /** open the "编辑这一天" sheet for the currently selected day */
+  function openDayMetaEditor() {
+    if (typeof WEATHER === 'undefined') return;
+    const day = DAYS[state.sel];
+    let cityResults = [], timer = null, seq = 0, delArmed = false;
+
+    openSheet('编辑这一天', day.dow + ' · ' + day.title,
+      '<div class="cs-note">可以改这一天的<b>城市</b>（天气读取的城市、行程与地图上的城市名会' +
+        '<b>联动</b>改变），也可以改上面的<b>路线标题</b>与<b>概述</b>。</div>' +
+      '<div class="dm-h">' + icon('pin') + '城市</div>' +
+      citySectionHtml(day) +
+      '<div class="sheet-sep"></div>' +
+      '<div class="dm-h">' + icon('edit') + '文字</div>' +
+      '<div class="field"><label>路线标题</label>' +
+        '<input id="dmTitle" type="text" value="' + esc(day.title) + '"></div>' +
+      '<div class="field"><label>英文标题（可选）</label>' +
+        '<input id="dmTitleEn" type="text" value="' + esc(day.titleEn || '') + '"></div>' +
+      '<div class="field"><label>概述</label>' +
+        '<textarea id="dmSummary" rows="3">' + esc(day.summary || '') + '</textarea></div>' +
+      '<button class="btn block primary" id="dmSave">' + icon('check') + '保存文字</button>' +
+      (STORE.isExtraDay(day.id)
+        ? '<button class="btn block ghost dm-del" id="dmDel" style="margin-top:10px">' +
+            icon('trash') + '删除这一天</button>'
+        : ''),
+      function () {
+        const inner = $('.sheet-inner');
+        inner.addEventListener('click', function (ev) {
+          const pre = ev.target.closest('[data-city-pre]');
+          if (pre) { pickPredefinedCity(pre.dataset.cityPre); return; }
+          const nw = ev.target.closest('[data-city-new]');
+          if (nw) {
+            const c = cityResults[Number(nw.dataset.cityNew)];
+            if (c) pickCustomCity(c.name, c.nameEn, c.lat, c.lng);
+            return;
+          }
+        });
+
+        const q = $('#dmCityQ');
+        if (q) q.addEventListener('input', function () {
+          clearTimeout(timer);
+          const v = q.value.trim();
+          const box = $('#dmCityRes');
+          if (v.length < 2) { box.innerHTML = ''; return; }
+          box.innerHTML = '<div class="egroup-empty">搜索中…</div>';
+          const mine = ++seq;
+          timer = setTimeout(function () {
+            SERVICES.searchGeocode(v).then(function (list) {
+              if (mine !== seq) return;
+              cityResults = list || [];
+              renderCityResults(cityResults);
+            }).catch(function () {
+              if (mine === seq) box.innerHTML = '<div class="egroup-empty">搜索失败，请重试</div>';
+            });
+          }, 380);
+        });
+
+        const save = $('#dmSave');
+        if (save) save.addEventListener('click', function () {
+          STORE.setDayMeta(day.id, {
+            title: ($('#dmTitle').value.trim() || null),
+            titleEn: ($('#dmTitleEn').value.trim() || null),
+            summary: ($('#dmSummary').value.trim() || null),
+          });
+          closeSheet();
+          refreshAfterCityChange();
+          toast('已保存这一天的文字');
+        });
+
+        const del = $('#dmDel');
+        if (del) del.addEventListener('click', function () {
+          if (!delArmed) {
+            delArmed = true;
+            del.innerHTML = icon('trash') + '再点一次确认删除';
+            return;
+          }
+          STORE.removeDay(day.id);
+          closeSheet();
+          state.sel = clamp(state.sel, 0, DAYS.length - 1);
+          state.mapFilter = String(state.sel);
+          refreshAfterCityChange();
+          toast('已删除这一天');
+        });
+      }, 'editor');
+  }
+
+  function pickPredefinedCity(place) {
     if (typeof WEATHER_PLACES === 'undefined') return;
     const day = DAYS[state.sel];
     const region = WP_REGION[place] || 'transit';
     STORE.setDayMeta(day.id, { region: region, weatherPlace: place });
     closeSheet();
-    // cascade: hero (weather city + region tag), chips, and the map legend/title
+    refreshAfterCityChange();
+    toast('已切换到「' + (REGIONS[region] || REGIONS.transit).label + '」，天气与城市名已联动更新');
+  }
+
+  function pickCustomCity(name, nameEn, lat, lng) {
+    const day = DAYS[state.sel];
+    const key = cityKeyFor(lat, lng);
+    if (typeof WEATHER_PLACES === 'undefined' || !WEATHER_PLACES[key]) {
+      const pal = cityPaletteFor(key);
+      STORE.setCustomCity(key, {
+        label: name, labelEn: nameEn || name, lat: lat, lng: lng,
+        color: pal.color, soft: pal.soft,
+      });
+    }
+    STORE.setDayMeta(day.id, { region: key, weatherPlace: key });
+    closeSheet();
+    refreshAfterCityChange();
+    // a brand-new query point needs a fresh fetch to have any weather
+    if (typeof WEATHER !== 'undefined') {
+      WEATHER.refresh(true).then(function () { renderHero(); repaintWeatherSheet(); });
+    }
+    toast('已把这一天设为「' + name + '」');
+  }
+
+  /** re-render everything that shows a day's city or text */
+  function refreshAfterCityChange() {
+    mapSuggest = null;
     renderHero();
     renderChips();
     if (state.mapReady && state.view === 'map') { renderMapLegend(); renderMapContent(); }
     else if (state.view === 'today') renderToday();
     else if (state.view === 'itin') renderItin();
-    toast('已切换到「' + (REGIONS[region] || REGIONS.transit).label + '」，天气与城市名已联动更新');
+  }
+
+  /* ---- add a day ------------------------------------------------------ */
+  const WD_EN = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  const MON_EN = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  function dowEnFor(iso) {
+    const d = new Date(iso + 'T12:00:00Z');
+    return WD_EN[(d.getUTCDay() + 7) % 7] + ' ' + pad2(Number(iso.slice(8, 10))) +
+      ' ' + MON_EN[Number(iso.slice(5, 7)) - 1];
+  }
+  function nextDayIso(iso) {
+    const t = Date.parse(iso + 'T00:00:00Z') + 86400000;
+    return new Date(t).toISOString().slice(0, 10);
+  }
+
+  function openAddDay() {
+    const last = DAYS[DAYS.length - 1];
+    const nextDate = nextDayIso(last ? last.date : zurichToday());
+    openSheet('添加一天', '手动增加一天的行程',
+      '<div class="cs-note">新的一天会按日期插入到行程里，之后可在「编辑行程」中加地点与交通。</div>' +
+      '<div class="field"><label>日期</label>' +
+        '<input id="adDate" type="date" value="' + esc(nextDate) + '"></div>' +
+      '<div class="field"><label>标题</label>' +
+        '<input id="adTitle" type="text" placeholder="例如 卢塞恩一日游"></div>' +
+      '<div class="field"><label>英文标题（可选）</label>' +
+        '<input id="adTitleEn" type="text" placeholder="Lucerne day trip"></div>' +
+      '<div class="field"><label>概述（可选）</label>' +
+        '<textarea id="adSummary" rows="3" placeholder="这一天打算做什么…"></textarea></div>' +
+      '<div class="field"><label>城市（可选，可搜索）</label>' +
+        '<input id="adCityQ" type="search" placeholder="例如 卢塞恩 / Lucerne" ' +
+          'autocomplete="off" autocapitalize="off"></div>' +
+      '<div id="adCityRes" class="cs-res"></div>' +
+      '<div id="adCityPick" class="cs-picked" style="display:none"></div>' +
+      '<button class="btn block primary" id="adSave" style="margin-top:6px">' +
+        icon('check') + '添加这一天</button>',
+      function () {
+        let results = [], timer = null, seq = 0, picked = null;
+        const inner = $('.sheet-inner');
+        inner.addEventListener('click', function (ev) {
+          const nw = ev.target.closest('[data-ad-city]');
+          if (!nw) return;
+          const c = results[Number(nw.dataset.adCity)];
+          if (!c) return;
+          picked = c;
+          $('#adCityPick').style.display = 'block';
+          $('#adCityPick').innerHTML = '<span class="cs-dot" style="background:var(--ink)"></span>' +
+            '<span class="cs-tx"><b>' + esc(c.name) + '</b><span>' + esc(c.note || '') +
+            ' · ' + c.lat.toFixed(3) + ', ' + c.lng.toFixed(3) + '</span></span>';
+          $('#adCityRes').innerHTML = '';
+          if ($('#adCityQ')) $('#adCityQ').value = c.name;
+        });
+
+        const q = $('#adCityQ');
+        if (q) q.addEventListener('input', function () {
+          clearTimeout(timer);
+          picked = null;
+          const v = q.value.trim();
+          if (v.length < 2) { $('#adCityRes').innerHTML = ''; return; }
+          $('#adCityRes').innerHTML = '<div class="egroup-empty">搜索中…</div>';
+          const mine = ++seq;
+          timer = setTimeout(function () {
+            SERVICES.searchGeocode(v).then(function (list) {
+              if (mine !== seq) return;
+              results = list || [];
+              $('#adCityRes').innerHTML = results.length ? results.map(function (c, i) {
+                return '<button class="cs-row" data-ad-city="' + i + '">' +
+                  '<span class="cs-dot" style="background:var(--faint)"></span>' +
+                  '<span class="cs-tx"><b>' + esc(c.name) + '</b><span>' +
+                    esc(c.note || '') + '</span></span>' +
+                  '<span class="cs-go">' + icon('plus') + '</span></button>';
+              }).join('') : '<div class="egroup-empty">没找到</div>';
+            }).catch(function () {
+              if (mine === seq) $('#adCityRes').innerHTML = '<div class="egroup-empty">搜索失败</div>';
+            });
+          }, 380);
+        });
+
+        $('#adSave').addEventListener('click', function () {
+          const date = $('#adDate').value;
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('请选择日期'); return; }
+          const title = $('#adTitle').value.trim();
+          if (!title) { toast('请填写标题'); return; }
+          let region = last ? last.region : 'transit';
+          let weatherPlace = last ? last.weatherPlace : 'gva';
+          if (picked) {
+            const key = cityKeyFor(picked.lat, picked.lng);
+            const pal = cityPaletteFor(key);
+            STORE.setCustomCity(key, {
+              label: picked.name, labelEn: picked.nameEn || picked.name,
+              lat: picked.lat, lng: picked.lng, color: pal.color, soft: pal.soft,
+            });
+            region = key; weatherPlace = key;
+          }
+          const di = dateInfo(date);
+          const d = STORE.addDay({
+            date: date, dow: di.wd, dowEn: dowEnFor(date),
+            title: title, titleEn: $('#adTitleEn').value.trim(),
+            summary: $('#adSummary').value.trim(),
+            region: region, weatherPlace: weatherPlace,
+          });
+          closeSheet();
+          const idx = DAYS.map(function (x) { return x.id; }).indexOf(d.id);
+          if (idx >= 0) { state.sel = idx; state.mapFilter = String(idx); }
+          refreshAfterCityChange();
+          if (picked && typeof WEATHER !== 'undefined') WEATHER.refresh(true);
+          toast('已添加 ' + di.md + '「' + title + '」');
+        });
+      }, 'editor');
   }
 
   function navSheet(lat, lng, name, sub, search, dayId) {
@@ -4014,9 +4280,11 @@
     if (!payload || !payload.user) throw new Error('文件格式不对');
     const cur = STORE.raw();
     ['places', 'legs', 'legEdits', 'blocks', 'hidden', 'photoSpots', 'hiddenPhotos',
-      'order', 'sortMode', 'placeTimes', 'presets', 'budget', 'rates', 'photoVisible'].forEach(function (k) {
+      'order', 'sortMode', 'placeTimes', 'presets', 'budget', 'rates', 'photoVisible',
+      'dayMeta', 'customCities', 'extraDays'].forEach(function (k) {
       if (payload.user[k] !== undefined) cur[k] = payload.user[k];
     });
+    // save() → apply() re-attaches extra days and re-registers custom cities
     STORE.save();
     if (Array.isArray(payload.expenses)) saveExpenses(payload.expenses);
   }
@@ -4471,11 +4739,11 @@
       const wxo = t.closest('[data-wx-open]');
       if (wxo) { openWeatherSheet(); return; }
 
-      const wxs = t.closest('[data-wx-swap]');
-      if (wxs) { openCitySwap(); return; }
+      const dme = t.closest('[data-day-meta]');
+      if (dme) { openDayMetaEditor(); return; }
 
-      const cs = t.closest('[data-cs]');
-      if (cs) { applyCitySwap(cs.dataset.cs); return; }
+      const addDay = t.closest('[data-add-day]');
+      if (addDay) { openAddDay(); return; }
 
       const wxr = t.closest('[data-wx-refresh]');
       if (wxr) {

@@ -31,7 +31,9 @@
   const PAST_DAYS = 7;             // so mid-trip days earlier in the week still resolve
   const FORECAST_DAYS = 16;        // Open-Meteo's forward horizon
 
-  const PLACE_IDS = Object.keys(WEATHER_PLACES);
+  // computed at fetch time so cities the traveller searches for (registered
+  // into WEATHER_PLACES at runtime) are picked up on the next refresh
+  function placeIds() { return Object.keys(WEATHER_PLACES); }
 
   const state = {
     loading: false,
@@ -73,10 +75,10 @@
   }
 
   /* ======================== fetching ================================== */
-  function buildUrl(opts) {
+  function buildUrl(ids, opts) {
     const params = new URLSearchParams();
-    params.set('latitude', PLACE_IDS.map(function (p) { return WEATHER_PLACES[p].lat; }).join(','));
-    params.set('longitude', PLACE_IDS.map(function (p) { return WEATHER_PLACES[p].lng; }).join(','));
+    params.set('latitude', ids.map(function (p) { return WEATHER_PLACES[p].lat; }).join(','));
+    params.set('longitude', ids.map(function (p) { return WEATHER_PLACES[p].lng; }).join(','));
     params.set('daily', DAILY);
     params.set('current', CURRENT);
     params.set('timezone', TRIP.timezone);
@@ -220,20 +222,21 @@
     notify();                                    // flip the panel into "loading"
 
     let err1 = null;
+    const ids = placeIds();
 
     // tier 1: whatever model blend covers the full window — this one matters
-    const t1 = fetchJson(buildUrl({ window: true }), 15000).then(function (json) {
+    const t1 = fetchJson(buildUrl(ids, { window: true }), 15000).then(function (json) {
       const list = Array.isArray(json) ? json : [json];
       list.forEach(function (payload, i) {
-        if (PLACE_IDS[i]) absorb(payload, PLACE_IDS[i], 1);
+        if (ids[i]) absorb(payload, ids[i], 1);
       });
     }).catch(function (e) { err1 = e; });
 
     // tier 2: MeteoSwiss ICON-CH2 for the near term — a bonus, never required
-    const t2 = fetchJson(buildUrl({ models: 'meteoswiss_icon_ch2' }), 15000).then(function (json) {
+    const t2 = fetchJson(buildUrl(ids, { models: 'meteoswiss_icon_ch2' }), 15000).then(function (json) {
       const list = Array.isArray(json) ? json : [json];
       list.forEach(function (payload, i) {
-        if (PLACE_IDS[i]) absorb(payload, PLACE_IDS[i], 2);
+        if (ids[i]) absorb(payload, ids[i], 2);
       });
     }).catch(function () {});
 
