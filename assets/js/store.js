@@ -26,6 +26,10 @@
       photoSpots: [],    // user-added photo spots
       hiddenPhotos: [],  // curated photo-spot ids the user hid
       photoVisible: true,
+      dayMeta: {},       // dayId -> { region, weatherPlace, title, titleEn }
+                        //   user overrides for a day's city/route, applied on
+                        //   top of data.js so the weather city + the itinerary
+                        //   / map city names can be changed in sync ("换城市")
       order: {},         // dayId -> { b: [key], p: [key], t: [key] }
       sortMode: {},      // dayId -> { b|p|t: 'manual' }  (absent => 'auto')
       geoCache: {},      // 'lat,lng' -> reverse-geocoded address
@@ -61,6 +65,9 @@
         places: (d.places || []).slice(),
         transport: (d.transport || []).slice(),
         blocks: (d.blocks || []).slice(),
+        // base day meta so a cleared override can be restored on re-apply
+        region: d.region, weatherPlace: d.weatherPlace,
+        title: d.title, titleEn: d.titleEn,
       };
     });
   }
@@ -298,7 +305,50 @@
       d.places = r.places;
       d.transport = r.transport;
       d.blocks = r.blocks;
+      // "换城市": a user override can repoint a day's region (itinerary / map
+      // city label + colour) and weatherPlace (the city weather is read from),
+      // plus optionally its route title — all in sync. Reset to base first so a
+      // cleared override restores the original value rather than lingering.
+      d.region = base[i].region;
+      d.weatherPlace = base[i].weatherPlace;
+      d.title = base[i].title;
+      d.titleEn = base[i].titleEn;
+      const m = data.dayMeta[d.id];
+      if (m) {
+        if (m.region != null) d.region = m.region;
+        if (m.weatherPlace != null) d.weatherPlace = m.weatherPlace;
+        if (m.title != null) d.title = m.title;
+        if (m.titleEn != null) d.titleEn = m.titleEn;
+      }
     });
+  }
+
+  /* ---------- day meta ("换城市") ------------------------------------- */
+  /** per-day overrides of region / weatherPlace / title / titleEn.
+      Returns a fresh copy so callers can't mutate the store directly. */
+  function getDayMeta(dayId) {
+    const m = data.dayMeta[dayId];
+    return m ? Object.assign({}, m) : {};
+  }
+
+  /**
+   * Merge an override into a day's meta. Pass null for a field to clear it
+   * (revert to the data.js base value); pass an empty object to wipe all.
+   * Supported keys: region, weatherPlace, title, titleEn.
+   */
+  function setDayMeta(dayId, patch) {
+    if (!data.dayMeta[dayId]) data.dayMeta[dayId] = {};
+    const cur = data.dayMeta[dayId];
+    Object.keys(patch || {}).forEach(function (k) {
+      if (k === 'region' || k === 'weatherPlace' || k === 'title' || k === 'titleEn') {
+        if (patch[k] == null) delete cur[k];
+        else cur[k] = patch[k];
+      }
+    });
+    if (!Object.keys(cur).length) delete data.dayMeta[dayId];
+    save();
+    apply();
+    return cur;
   }
 
   /* ---------- mutations ---------------------------------------------- */
@@ -588,6 +638,7 @@
   global.STORE = {
     load: load, save: save, onChange: onChange,
     resolved: resolved, apply: apply,
+    getDayMeta: getDayMeta, setDayMeta: setDayMeta,
     addPlace: addPlace, addLeg: addLeg, addBlock: addBlock,
     updateLeg: updateLeg,
     placeTime: placeTime, setPlaceTime: setPlaceTime,

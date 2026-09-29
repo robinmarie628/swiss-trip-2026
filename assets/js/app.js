@@ -363,7 +363,12 @@
           '<span class="arrow">·</span><span class="en">' + esc(day.titleEn) + '</span>' +
         '</div>' +
         '<div class="hero-sum">' + esc(day.summary) + '</div>' +
-        (typeof WEATHER !== 'undefined' ? WEATHER.panelHtml(day) : '') +
+        (typeof WEATHER !== 'undefined'
+          ? '<div class="wx-wrap"><div class="wx-head">' +
+              '<span class="wx-head-t">' + icon('sun') + '天气</span>' +
+              '<button class="wx-swap" data-wx-swap="1">换城市</button>' +
+            '</div>' + WEATHER.panelHtml(day) + '</div>'
+          : '') +
         '<div class="hero-stats">' +
           '<div class="hero-stat"><div class="k">行程日</div><div class="v">Day ' + idx + '</div></div>' +
           '<div class="hero-stat"><div class="k">住宿</div><div class="v">' +
@@ -3128,14 +3133,25 @@
    * by name" path is kept below for adding a known viewpoint.
    */
   function openPhotoAdd() {
-    const day = DAYS[state.sel];
-    const st = { lat: null, lng: null, blob: null, url: null };
+    const st = { lat: null, lng: null, blob: null, url: null, dayIdx: state.sel };
     let searchTimer = null, searchSeq = 0;
     phResults = [];
 
-    openSheet('添加拍照点', day.dow + ' · ' + day.title,
+    // which day does this photo actually belong to? defaults to the day the
+    // app is currently showing, but the traveller can pick the real one — this
+    // is the fix for photos getting recorded under the wrong day.
+    const dayOpts = DAYS.map(function (d, i) {
+      const di = dateInfo(d.date);
+      return '<option value="' + i + '"' + (i === st.dayIdx ? ' selected' : '') + '>' +
+        esc(d.dow) + ' · ' + pad2(di.day) + di.month + ' · ' + esc(d.title) + '</option>';
+    }).join('');
+    const day = function () { return DAYS[st.dayIdx]; };
+
+    openSheet('添加拍照点', '选好日期，再拍 / 上传',
       // ---- Section A: current location + photo (primary) ----
       '<div class="pa-card">' +
+        '<div class="field" style="margin-bottom:12px"><label>所属日期</label>' +
+          '<select id="paDay" class="pa-day">' + dayOpts + '</select></div>' +
         '<div class="pa-h">' + icon('camera') + '用当前位置 + 照片</div>' +
         '<button class="btn block primary" id="paLoc">' + icon('pin') + '读取我的位置（GPS）</button>' +
         '<div id="paLocMsg" class="pa-msg" style="display:none"></div>' +
@@ -3174,6 +3190,11 @@
         '<div id="phResults"><div class="egroup-empty">输入至少 2 个字开始搜索</div></div>' +
       '</details>',
       function () {
+        const $day = $('#paDay');
+        if ($day) $day.addEventListener('change', function () {
+          st.dayIdx = parseInt($day.value, 10) || 0;
+        });
+
         const $loc = $('#paLoc');
         if ($loc) $loc.addEventListener('click', readLoc);
 
@@ -3257,7 +3278,7 @@
       const photoId = 'ph' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       IDB.put({ id: photoId, name: name || '拍照点', blob: st.blob, ts: Date.now() }).then(function () {
         STORE.addPhotoSpot({
-          day: day.id, region: day.region,
+          day: day().id, region: day().region,
           name: name || ('我的拍照点 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })),
           nameEn: '', lat: st.lat, lng: st.lng, best: '', tip: tip, photoId: photoId,
         });
@@ -3295,7 +3316,7 @@
         const p = phResults[Number(b.dataset.phAdd)];
         if (!p) return;
         STORE.addPhotoSpot({
-          day: day.id, region: day.region,
+          day: day().id, region: day().region,
           name: p.name, nameEn: p.nameEn,
           lat: p.lat, lng: p.lng,
           tip: (($('#paTip') || {}).value || '').trim(), best: '',
@@ -3497,6 +3518,65 @@
       const day = DAYS[state.sel];
       $('#sheetBody').innerHTML = WEATHER.sheetHtml(day);
     }
+  }
+
+  /* ---- change city ("换城市") --------------------------------------- */
+  // each weather query point implies the region whose label + colour the
+  // itinerary and map use, so swapping to a city updates both in sync.
+  const WP_REGION = {
+    geneva: 'geneva', grindelwald: 'alps', first: 'alps',
+    wengen: 'valley', zurich: 'zurich', rheinfall: 'zurich', gva: 'transit',
+  };
+
+  function cityOptions() {
+    if (typeof WEATHER_PLACES === 'undefined') return [];
+    return Object.keys(WEATHER_PLACES).map(function (place) {
+      const wp = WEATHER_PLACES[place];
+      const region = WP_REGION[place] || 'transit';
+      const rg = REGIONS[region] || REGIONS.transit;
+      return {
+        place: place, wLabel: wp.label, wElev: wp.elev || '',
+        region: region, rLabel: rg.label, rColor: rg.color,
+      };
+    });
+  }
+
+  /** open the "换城市" picker for the currently selected day */
+  function openCitySwap() {
+    if (typeof WEATHER === 'undefined') return;
+    const day = DAYS[state.sel];
+    const opts = cityOptions();
+    const rows = opts.map(function (o) {
+      const on = (o.region === day.region && o.place === day.weatherPlace);
+      return '<button class="cs-row' + (on ? ' is-on' : '') + '" data-cs="' + o.place + '" ' +
+          'style="--c:' + o.rColor + '">' +
+        '<span class="cs-dot" style="background:' + o.rColor + '"></span>' +
+        '<span class="cs-tx"><b>' + esc(o.rLabel) + '</b>' +
+          '<span>天气读取：' + esc(o.wLabel) + (o.wElev ? ' · ' + esc(o.wElev) : '') + '</span></span>' +
+        (on ? '<span class="cs-on">当前</span>' : '<span class="cs-go">' + icon('check') + '</span>') +
+      '</button>';
+    }).join('');
+
+    openSheet('换城市', day.dow + ' · ' + day.title,
+      '<div class="cs-note">天气不好时可把这一天的城市整体换掉 —— 天气读取的城市、' +
+        '行程与地图上显示的城市名称会<b>联动</b>改变。</div>' +
+      '<div class="cs-list">' + rows + '</div>', null, 'weather');
+  }
+
+  /** apply a city swap: repoint region + weatherPlace for the day, then repaint */
+  function applyCitySwap(place) {
+    if (typeof WEATHER_PLACES === 'undefined') return;
+    const day = DAYS[state.sel];
+    const region = WP_REGION[place] || 'transit';
+    STORE.setDayMeta(day.id, { region: region, weatherPlace: place });
+    closeSheet();
+    // cascade: hero (weather city + region tag), chips, and the map legend/title
+    renderHero();
+    renderChips();
+    if (state.mapReady && state.view === 'map') { renderMapLegend(); renderMapContent(); }
+    else if (state.view === 'today') renderToday();
+    else if (state.view === 'itin') renderItin();
+    toast('已切换到「' + (REGIONS[region] || REGIONS.transit).label + '」，天气与城市名已联动更新');
   }
 
   function navSheet(lat, lng, name, sub, search, dayId) {
@@ -4390,6 +4470,12 @@
 
       const wxo = t.closest('[data-wx-open]');
       if (wxo) { openWeatherSheet(); return; }
+
+      const wxs = t.closest('[data-wx-swap]');
+      if (wxs) { openCitySwap(); return; }
+
+      const cs = t.closest('[data-cs]');
+      if (cs) { applyCitySwap(cs.dataset.cs); return; }
 
       const wxr = t.closest('[data-wx-refresh]');
       if (wxr) {

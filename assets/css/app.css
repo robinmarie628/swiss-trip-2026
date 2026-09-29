@@ -1752,3 +1752,57 @@ body.linking { cursor: crosshair; }
   body { background: #fff; }
   .view { display: block !important; }
 }
+
+/* ---------- weather panel header + 换城市 -------------------------------- */
+.wx-wrap { margin-top: 14px; }
+.wx-head {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 2px 8px;
+}
+.wx-head-t {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 800; letter-spacing: .08em;
+  text-transform: uppercase; color: rgba(255, 255, 255, .62);
+}
+.wx-head-t svg { width: 14px; height: 14px; }
+.wx-swap {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; font-size: 11.5px; font-weight: 700;
+  color: #fff; background: rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, .28); border-radius: 999px;
+  cursor: pointer; line-height: 1; transition: background .15s var(--ease);
+}
+.wx-swap svg { width: 12px; height: 12px; }
+.wx-swap:active { background: rgba(255, 255, 255, .26); }
+
+/* ---------- 换城市 sheet ------------------------------------------------ */
+.cs-note {
+  font-size: 12.5px; line-height: 1.7; color: var(--ink-2);
+  background: var(--surface-2); border-radius: var(--r-sm);
+  padding: 11px 13px; margin-bottom: 12px;
+}
+.cs-note b { color: var(--ink); }
+.cs-list { display: flex; flex-direction: column; gap: 9px; }
+.cs-row {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  text-align: left; padding: 11px 13px; cursor: pointer;
+  background: var(--surface); border: 1.5px solid var(--line);
+  border-radius: var(--r-md); transition: border-color .15s var(--ease), background .15s var(--ease);
+}
+.cs-row:active { background: var(--surface-2); }
+.cs-row.is-on { border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, var(--surface)); }
+.cs-dot {
+  flex: none; width: 12px; height: 12px; border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent);
+}
+.cs-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cs-tx b { font-size: 14px; font-weight: 800; color: var(--ink); }
+.cs-tx span { font-size: 11.5px; color: var(--muted); }
+.cs-on {
+  flex: none; font-size: 11px; font-weight: 700; color: #fff;
+  background: var(--c); padding: 3px 9px; border-radius: 999px;
+}
+.cs-go { flex: none; color: var(--muted); }
+.cs-go svg { width: 17px; height: 17px; }
+
