@@ -2,7 +2,7 @@
   "app": "swiss-trip-workbench",
   "kind": "sync",
   "version": 1,
-  "syncedAt": "2026-09-29T14:00:45.704Z",
+  "syncedAt": "2026-09-29T14:28:59.497Z",
   "user": {
     "version": 1,
     "places": {
@@ -73,6 +73,26 @@
           "lng": 8.0054694,
           "kind": "sight",
           "note": "格林德瓦 · Verwaltungskreis Interlaken-Oberhasli",
+          "stationId": null
+        }
+      ],
+      "d7": [
+        {
+          "name": "日内瓦机场火车站",
+          "nameEn": "",
+          "lat": 46.2313343,
+          "lng": 6.1102707,
+          "kind": "sight",
+          "note": "Route de l'Aéroport · Le Grand-Saconnex",
+          "stationId": null
+        },
+        {
+          "name": "Zürich Oerlikon",
+          "nameEn": "",
+          "lat": 47.4114986,
+          "lng": 8.5441507,
+          "kind": "sight",
+          "note": "Hofwiesenstrasse · Oerlikon",
           "stationId": null
         }
       ]
@@ -212,6 +232,17 @@
           "time": null,
           "booked": "09:31"
         }
+      },
+      "d6": {
+        "Zürich Oerlikon / HB→Neuhausen Rheinfall 或 Schloss Laufen am Rheinfall|火车": {
+          "from": "Zürich Oerlikon",
+          "to": "Neuhausen Rheinfall 或 Schloss Laufen am Rheinfall",
+          "mode": "火车",
+          "duration": "42",
+          "note": "需买票",
+          "time": "08:15",
+          "booked": null
+        }
       }
     },
     "blocks": {},
@@ -266,6 +297,14 @@
           "利马特河",
           "Zürich Hauptbahnhof"
         ]
+      },
+      "d7": {
+        "p": [
+          "Zürich Oerlikon",
+          "日内瓦机场火车站",
+          "宗教改革墙",
+          "日内瓦老城"
+        ]
       }
     },
     "sortMode": {
@@ -276,6 +315,9 @@
         "p": "manual"
       },
       "d5": {
+        "p": "manual"
+      },
+      "d7": {
         "p": "manual"
       }
     },
