@@ -3595,6 +3595,19 @@
       '<div class="cs-list">' + rows + '</div>';
   }
 
+  /**
+   * City geocoding, wrapped so the promise ALWAYS settles. If the service is
+   * missing or throws synchronously, the caller's .catch runs and the UI stops
+   * showing "搜索中…" instead of hanging forever.
+   */
+  function geocodeCity(q) {
+    if (typeof SERVICES === 'undefined' || typeof SERVICES.searchGeocode !== 'function') {
+      return Promise.reject(new Error('搜索服务不可用'));
+    }
+    try { return Promise.resolve(SERVICES.searchGeocode(q)); }
+    catch (e) { return Promise.reject(e); }
+  }
+
   function renderCityResults(list) {
     const box = $('#dmCityRes');
     if (!box) return;
@@ -3658,7 +3671,7 @@
           box.innerHTML = '<div class="egroup-empty">搜索中…</div>';
           const mine = ++seq;
           timer = setTimeout(function () {
-            SERVICES.searchGeocode(v).then(function (list) {
+            geocodeCity(v).then(function (list) {
               if (mine !== seq) return;
               cityResults = list || [];
               renderCityResults(cityResults);
@@ -3796,7 +3809,7 @@
           $('#adCityRes').innerHTML = '<div class="egroup-empty">搜索中…</div>';
           const mine = ++seq;
           timer = setTimeout(function () {
-            SERVICES.searchGeocode(v).then(function (list) {
+            geocodeCity(v).then(function (list) {
               if (mine !== seq) return;
               results = list || [];
               $('#adCityRes').innerHTML = results.length ? results.map(function (c, i) {

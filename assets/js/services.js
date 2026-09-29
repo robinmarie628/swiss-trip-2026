@@ -354,6 +354,8 @@
   global.SERVICES = {
     searchPlaces: searchPlaces,
     searchPlacesStreaming: searchPlacesStreaming,
+    searchGeocode: searchGeocode,
+    searchOsm: searchOsm,
     searchStations: searchStations,
     reverseGeocode: reverseGeocode,
     connections: connections,
