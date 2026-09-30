@@ -35,6 +35,8 @@
       customCities: {},  // cityKey -> { label, labelEn, lat, lng, color, soft }
                         //   cities the traveller searched for, registered into
                         //   REGIONS + WEATHER_PLACES on every apply()
+      customHotels: {},  // hotelId -> { name, city, address, lat, lng, region, ... }
+                        //   hotels the traveller added, so a new day can have a stay
       order: {},         // dayId -> { b: [key], p: [key], t: [key] }
       sortMode: {},      // dayId -> { b|p|t: 'manual' }  (absent => 'auto')
       geoCache: {},      // 'lat,lng' -> reverse-geocoded address
@@ -77,6 +79,7 @@
         // base day meta so a cleared override can be restored on re-apply
         region: d.region, weatherPlace: d.weatherPlace,
         title: d.title, titleEn: d.titleEn, summary: d.summary,
+        hotelId: d.hotelId,
       };
     }
     return base[d.id];
@@ -108,7 +111,7 @@
         const parsed = JSON.parse(raw);
         data = Object.assign(blank(), parsed || {});
         ['places', 'legs', 'blocks', 'hidden', 'order', 'sortMode', 'geoCache',
-          'legEdits', 'placeTimes', 'dayMeta', 'customCities']
+          'legEdits', 'placeTimes', 'dayMeta', 'customCities', 'customHotels']
           .forEach(function (k) {
             if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {};
           });
@@ -378,6 +381,7 @@
       d.title = b.title;
       d.titleEn = b.titleEn;
       d.summary = b.summary;
+      d.hotelId = b.hotelId;
       const m = data.dayMeta[d.id];
       if (m) {
         if (m.region != null) d.region = m.region;
@@ -385,12 +389,13 @@
         if (m.title != null) d.title = m.title;
         if (m.titleEn != null) d.titleEn = m.titleEn;
         if (m.summary != null) d.summary = m.summary;
+        if (m.hotelId != null) d.hotelId = m.hotelId;
       }
     });
   }
 
   /* ---------- day meta ("换城市") ------------------------------------- */
-  const META_KEYS = ['region', 'weatherPlace', 'title', 'titleEn', 'summary'];
+  const META_KEYS = ['region', 'weatherPlace', 'title', 'titleEn', 'summary', 'hotelId'];
 
   /** per-day overrides of region / weatherPlace / title / titleEn / summary.
       Returns a fresh copy so callers can't mutate the store directly. */
@@ -432,6 +437,31 @@
     apply();
     return data.customCities[key];
   }
+
+  /* ---------- custom hotels (added by the traveller) ------------------ */
+  function customHotels() { return data.customHotels; }
+
+  /** add (or update) a hotel the traveller typed in, so a day can point at it */
+  function setCustomHotel(id, def) {
+    data.customHotels[id] = {
+      id: id,
+      name: def.name,
+      city: def.city || def.name,
+      address: def.address || '',
+      lat: def.lat, lng: def.lng,
+      region: def.region || 'transit',
+      nightsText: def.nightsText || '',
+      checkIn: def.checkIn || '',
+      checkOut: def.checkOut || '',
+      note: def.note || '',
+      custom: true,
+    };
+    save();
+    apply();
+    return data.customHotels[id];
+  }
+
+  function removeCustomHotel(id) { delete data.customHotels[id]; save(); }
 
   /* ---------- user-added days ----------------------------------------- */
   function isExtraDay(dayId) {
@@ -807,6 +837,7 @@
     resolved: resolved, apply: apply,
     getDayMeta: getDayMeta, setDayMeta: setDayMeta,
     customCities: customCities, setCustomCity: setCustomCity,
+    customHotels: customHotels, setCustomHotel: setCustomHotel, removeCustomHotel: removeCustomHotel,
     addDay: addDay, removeDay: removeDay, isExtraDay: isExtraDay,
     restoreDay: restoreDay, restoreDays: restoreDays, removedDays: removedDays,
     addPlace: addPlace, addLeg: addLeg, addBlock: addBlock,

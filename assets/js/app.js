@@ -32,7 +32,7 @@
 
   // shown in "更多 · 这个工作台" so you can confirm which build is loaded.
   // Keep in step with VERSION in sw.js.
-  const APP_VERSION = 'v1.7.12';
+  const APP_VERSION = 'v1.7.13';
 
   /* toast --------------------------------------------------------------- */
   let toastTimer = null;
@@ -141,7 +141,8 @@
     }
   }
 
-  const hotelById = (id) => HOTELS.filter((h) => h.id === id)[0] || null;
+  const hotelById = (id) => HOTELS.filter((h) => h.id === id)[0] ||
+    (typeof STORE !== 'undefined' && id ? STORE.customHotels()[id] : null) || null;
   const regionOf = (day) => REGIONS[day.region] || REGIONS.transit;
 
   /* ======================== small view pieces ========================= */
@@ -485,33 +486,46 @@
     }).join('');
   }
 
-  function hotelBare(hotel) {
+  function hotelBare(hotel, day) {
     if (!hotel) {
+      // the last itinerary day ends with a flight home; any other day without a
+      // stay (e.g. one the traveller just added) just has none recorded yet
+      const isReturn = day && day.id === (DAYS[DAYS.length - 1] || {}).id;
       return '<div class="hotel">' +
-        '<span class="hotel-pic" style="--tint:#5A6572;--tint-soft:#EDEFF2">' + icon('plane') + '</span>' +
-        '<div class="hotel-tx"><b>无住宿 · 当天返程</b>' +
-          '<div class="addr">回程航班 CA862 · 日内瓦 13:20 起飞</div></div>' +
+        '<span class="hotel-pic" style="--tint:#5A6572;--tint-soft:#EDEFF2">' +
+          icon(isReturn ? 'plane' : 'bed') + '</span>' +
+        '<div class="hotel-tx"><b>' + (isReturn ? '无住宿 · 当天返程' : '未设置住宿') + '</b>' +
+          '<div class="addr">' + (isReturn ? '回程航班 CA862 · 日内瓦 13:20 起飞'
+            : '点下方「设置住宿」填入酒店，可导航与查看地址') + '</div></div>' +
       '</div>';
     }
     const r = REGIONS[hotel.region] || REGIONS.transit;
+    const dates = [];
+    if (hotel.nightsText) dates.push('<span class="badge tint">' + icon('cal') + esc(hotel.nightsText) + '</span>');
+    if (hotel.checkIn) dates.push('<span class="badge">入住 ' + esc(String(hotel.checkIn).replace('-', '/')) + '</span>');
+    if (hotel.checkOut) dates.push('<span class="badge">退房 ' + esc(String(hotel.checkOut).replace('-', '/')) + '</span>');
     return '<div class="hotel" style="' + tintStyle(r) + '">' +
       '<span class="hotel-pic">' + icon('bed') + '</span>' +
       '<div class="hotel-tx">' +
         '<b>' + esc(hotel.name) + '</b>' +
-        '<div class="addr">' + esc(hotel.address) + '</div>' +
-        '<div class="hotel-badges">' +
-          '<span class="badge tint">' + icon('cal') + esc(hotel.nightsText) + '</span>' +
-          '<span class="badge">入住 ' + esc(hotel.checkIn.replace('-', '/')) + '</span>' +
-          '<span class="badge">退房 ' + esc(hotel.checkOut.replace('-', '/')) + '</span>' +
-        '</div>' +
+        (hotel.address ? '<div class="addr">' + esc(hotel.address) + '</div>' : '') +
+        (dates.length ? '<div class="hotel-badges">' + dates.join('') + '</div>' : '') +
       '</div>' +
     '</div>' +
     (hotel.note ? '<div style="margin-top:11px;font-size:12.5px;line-height:1.6;color:var(--muted)">' +
       esc(hotel.note) + '</div>' : '') +
     '<div class="btn-row" style="margin-top:12px">' +
-      '<button class="btn sm primary" data-hotel-nav="' + hotel.id + '">' + icon('nav') + '导航</button>' +
-      '<button class="btn sm ghost" data-copy="' + esc(hotel.address) + '">复制地址</button>' +
-      '<button class="btn sm ghost" data-hotel-map="' + hotel.id + '">在地图查看</button>' +
+      (hotel.lat != null
+        ? '<button class="btn sm primary" data-hotel-nav="' + hotel.id + '">' + icon('nav') + '导航</button>'
+        : '') +
+      (hotel.address
+        ? '<button class="btn sm ghost" data-copy="' + esc(hotel.address) + '">复制地址</button>'
+        : '') +
+      (hotel.lat != null
+        ? '<button class="btn sm ghost" data-hotel-map="' + hotel.id + '">在地图查看</button>'
+        : '') +
+      '<button class="btn sm ghost" data-hotel-edit="' + esc(day ? day.id : '') + '">' +
+        icon('edit') + (hotel.custom ? '编辑住宿' : '更换住宿') + '</button>' +
     '</div>';
   }
 
@@ -607,10 +621,16 @@
 
   function hotelCard(day) {
     const hotel = hotelById(day.hotelId);
-    const r = hotel ? (REGIONS[hotel.region] || REGIONS.transit) : REGIONS.transit;
+    const r = hotel ? (REGIONS[hotel.region] || REGIONS.transit) : regionOf(day);
     return '<div class="card">' +
-      cardHead(r, 'bed', hotel ? '今晚住宿' : '住宿', hotel ? hotel.city : '无住宿 · 当天返程') +
-      '<div class="card-bd">' + hotelBare(hotel) + '</div></div>';
+      cardHead(r, 'bed', hotel ? '今晚住宿' : '住宿', hotel ? hotel.city : '未设置住宿') +
+      '<div class="card-bd">' + hotelBare(hotel, day) +
+        (hotel ? '' :
+          '<div class="btn-row" style="margin-top:12px">' +
+            '<button class="btn sm primary" data-hotel-edit="' + esc(day.id) + '">' +
+              icon('plus') + '设置住宿</button>' +
+          '</div>') +
+      '</div></div>';
   }
 
   function placesCard(day, title) {
@@ -3172,7 +3192,12 @@
    * by name" path is kept below for adding a known viewpoint.
    */
   function openPhotoAdd() {
-    const st = { lat: null, lng: null, blob: null, url: null, dayIdx: state.sel };
+    // when the map is filtered to one day, that day is the one the traveller is
+    // looking at — default the new spot to it so it shows up right away
+    const filtered = state.view === 'map' && /^\d+$/.test(String(state.mapFilter))
+      ? clamp(Number(state.mapFilter), 0, DAYS.length - 1) : null;
+    const st = { lat: null, lng: null, blob: null, url: null,
+      dayIdx: filtered == null ? state.sel : filtered };
     let searchTimer = null, searchSeq = 0;
     phResults = [];
 
@@ -3316,16 +3341,27 @@
       const tip = (($('#paTip') || {}).value || '').trim();
       const photoId = 'ph' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       IDB.put({ id: photoId, name: name || '拍照点', blob: st.blob, ts: Date.now() }).then(function () {
+        const spotDayId = day().id;
         STORE.addPhotoSpot({
-          day: day().id, region: day().region,
+          day: spotDayId, region: day().region,
           name: name || ('我的拍照点 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })),
           nameEn: '', lat: st.lat, lng: st.lng, best: '', tip: tip, photoId: photoId,
         });
         if (st.url) { URL.revokeObjectURL(st.url); st.url = null; }
         closeSheet();
+        // if the map is filtered to another day, switch to the spot's day so the
+        // traveller immediately sees the one they just added
+        const spotIdx = DAYS.map(function (d) { return d.id; }).indexOf(spotDayId);
+        if (state.mapReady && state.mapFilter !== 'all' &&
+            spotIdx >= 0 && String(spotIdx) !== state.mapFilter) {
+          state.mapFilter = String(spotIdx);
+          renderMapLegend();
+        }
         refreshAfterEdit();
         if (state.mapReady) renderMapContent();
         toast('已添加拍照点');
+      }).catch(function (e) {
+        toast('保存失败：' + ((e && e.message) || '本地存储不可用'));
       });
     }
 
@@ -3354,13 +3390,20 @@
         if (!b) return;
         const p = phResults[Number(b.dataset.phAdd)];
         if (!p) return;
+        const spotDayId = day().id;
         STORE.addPhotoSpot({
-          day: day().id, region: day().region,
+          day: spotDayId, region: day().region,
           name: p.name, nameEn: p.nameEn,
           lat: p.lat, lng: p.lng,
           tip: (($('#paTip') || {}).value || '').trim(), best: '',
         });
         closeSheet();
+        const spotIdx = DAYS.map(function (d) { return d.id; }).indexOf(spotDayId);
+        if (state.mapReady && state.mapFilter !== 'all' &&
+            spotIdx >= 0 && String(spotIdx) !== state.mapFilter) {
+          state.mapFilter = String(spotIdx);
+          renderMapLegend();
+        }
         refreshAfterEdit();
         if (state.mapReady) renderMapContent();
         toast('已添加拍照点「' + p.name + '」');
@@ -3687,9 +3730,12 @@
 
     openSheet('编辑这一天', day.dow + ' · ' + day.title,
       '<div class="cs-note">可以改这一天的<b>城市</b>（天气读取的城市、行程与地图上的城市名会' +
-        '<b>联动</b>改变），也可以改上面的<b>路线标题</b>与<b>概述</b>。</div>' +
+        '<b>联动</b>改变），也可以改上面的<b>路线标题</b>与<b>概述</b>、设置<b>住宿</b>。</div>' +
       '<div class="dm-h">' + icon('pin') + '城市</div>' +
       citySectionHtml(day) +
+      '<div class="sheet-sep"></div>' +
+      '<div class="dm-h">' + icon('bed') + '住宿</div>' +
+      hotelSectionHtml(day) +
       '<div class="sheet-sep"></div>' +
       '<div class="dm-h">' + icon('edit') + '文字</div>' +
       '<div class="field"><label>路线标题</label>' +
@@ -3808,6 +3854,147 @@
     if (state.mapReady && state.view === 'map') { renderMapLegend(); renderMapContent(); }
     else if (state.view === 'today') renderToday();
     else if (state.view === 'itin') renderItin();
+  }
+
+  /* ---- lodging for a day ("设置住宿") --------------------------------- */
+  function hotelSectionHtml(day) {
+    const h = hotelById(day.hotelId);
+    const color = ((h && REGIONS[h.region]) || regionOf(day)).color;
+    return '<div class="cs-cur" style="--c:' + color + '">' +
+        '<span class="cs-dot" style="background:' + color + '"></span>' +
+        '<span class="cs-tx"><b>' + (h ? esc(h.name) : '未设置住宿') + '</b>' +
+          '<span>' + (h ? esc(h.address || h.city || '') :
+            '为这一天添加酒店，可导航 / 复制地址 / 地图查看') + '</span></span>' +
+      '</div>' +
+      '<button class="btn block ghost" data-hotel-edit="' + esc(day.id) + '" style="margin-top:10px">' +
+        icon(h ? 'edit' : 'plus') + (h ? '更换 / 编辑住宿' : '设置住宿') + '</button>';
+  }
+
+  /** re-render after a day's lodging changed */
+  function afterHotelChange() {
+    closeSheet();
+    refreshAfterEdit();
+    renderHero();
+    if (state.mapReady) renderMapContent();
+  }
+
+  /** set / change / clear the lodging for one day (existing hotel or a new one) */
+  function openHotelEditor(dayId) {
+    const day = DAYS.filter(function (d) { return d.id === dayId; })[0] || DAYS[state.sel];
+    const cur = hotelById(day.hotelId);
+    const existing = HOTELS.concat(Object.keys(STORE.customHotels()).map(function (k) {
+      return STORE.customHotels()[k];
+    }));
+    let results = [], timer = null, seq = 0;
+
+    openSheet('设置住宿', day.dow + ' · ' + day.title,
+      (cur
+        ? '<div class="cs-cur" style="--c:' + ((REGIONS[cur.region] || REGIONS.transit).color) + '">' +
+            '<span class="cs-dot" style="background:' + ((REGIONS[cur.region] || REGIONS.transit).color) + '"></span>' +
+            '<span class="cs-tx"><b>' + esc(cur.name) + '</b><span>' + esc(cur.address || cur.city || '') + '</span></span>' +
+          '</div>' +
+          '<button class="btn block ghost dm-del" id="htClear" style="margin-top:10px">' +
+            icon('trash') + '清除这一天的住宿</button>' +
+          '<div class="sheet-sep"></div>'
+        : '') +
+      '<div class="dm-h">' + icon('bed') + '新酒店</div>' +
+      '<div class="field"><label>搜索酒店 / 地点（可选）</label>' +
+        '<input id="htQ" type="search" placeholder="例如 Hotel Interlaken / Interlaken" ' +
+          'autocomplete="off" autocapitalize="off"></div>' +
+      '<div id="htRes" class="cs-res"></div>' +
+      '<div class="field"><label>酒店名称</label>' +
+        '<input id="htName" type="text" placeholder="酒店名称"></div>' +
+      '<div class="field"><label>地址（可选）</label>' +
+        '<input id="htAddr" type="text" placeholder="街道、城市"></div>' +
+      '<div class="pa-row2">' +
+        '<div class="field" style="margin:0"><input id="htLat" type="number" step="any" ' +
+          'placeholder="纬度 lat" inputmode="decimal"></div>' +
+        '<div class="field" style="margin:0"><input id="htLng" type="number" step="any" ' +
+          'placeholder="经度 lng" inputmode="decimal"></div>' +
+      '</div>' +
+      '<div class="pa-hint">有坐标才能「导航」与「在地图查看」；没有坐标也能先存名称和地址。</div>' +
+      '<button class="btn block primary" id="htSave" style="margin-top:6px">' +
+        icon('check') + '保存住宿</button>' +
+      (existing.length
+        ? '<div class="sheet-sep"></div><div class="dm-h">' + icon('pin') + '或直接使用已有酒店</div>' +
+          '<div class="cs-list">' + existing.map(function (h) {
+            const rg = REGIONS[h.region] || REGIONS.transit;
+            return '<button class="cs-row" data-ht-use="' + esc(h.id) + '" style="--c:' + rg.color + '">' +
+              '<span class="cs-dot" style="background:' + rg.color + '"></span>' +
+              '<span class="cs-tx"><b>' + esc(h.name) + '</b><span>' +
+                esc(h.city || '') + (h.address ? ' · ' + esc(h.address) : '') + '</span></span>' +
+              '<span class="cs-go">' + icon('check') + '</span></button>';
+          }).join('') + '</div>'
+        : ''),
+      function () {
+        const inner = $('.sheet-inner');
+        inner.addEventListener('click', function (ev) {
+          const use = ev.target.closest('[data-ht-use]');
+          if (use) { STORE.setDayMeta(day.id, { hotelId: use.dataset.htUse }); afterHotelChange(); return; }
+          const r = ev.target.closest('[data-ht-pick]');
+          if (r) {
+            const c = results[Number(r.dataset.htPick)];
+            if (!c) return;
+            $('#htName').value = c.name;
+            $('#htAddr').value = c.note || '';
+            $('#htLat').value = c.lat;
+            $('#htLng').value = c.lng;
+            $('#htRes').innerHTML = '';
+            toast('已填入，可修改后保存');
+            return;
+          }
+        });
+
+        const clr = $('#htClear');
+        if (clr) clr.addEventListener('click', function () {
+          STORE.setDayMeta(day.id, { hotelId: null });
+          afterHotelChange();
+          toast('已清除住宿');
+        });
+
+        const q = $('#htQ');
+        if (q) q.addEventListener('input', function () {
+          clearTimeout(timer);
+          const v = q.value.trim();
+          if (v.length < 2) { $('#htRes').innerHTML = ''; return; }
+          $('#htRes').innerHTML = '<div class="egroup-empty">搜索中…</div>';
+          const mine = ++seq;
+          timer = setTimeout(function () {
+            geocodeCity(v).then(function (list) {
+              if (mine !== seq) return;
+              results = list || [];
+              $('#htRes').innerHTML = results.length ? results.map(function (c, i) {
+                return '<button class="cs-row" data-ht-pick="' + i + '">' +
+                  '<span class="cs-dot" style="background:var(--faint)"></span>' +
+                  '<span class="cs-tx"><b>' + esc(c.name) + '</b><span>' +
+                    esc(c.note || '') + ' · ' + c.lat.toFixed(3) + ', ' + c.lng.toFixed(3) +
+                  '</span></span>' +
+                  '<span class="cs-go">' + icon('plus') + '</span></button>';
+              }).join('') : '<div class="egroup-empty">没找到，直接在下面手动填写</div>';
+            }).catch(function (err) {
+              if (mine === seq) $('#htRes').innerHTML = '<div class="egroup-empty">搜索失败：' +
+                esc((err && err.message) || '网络错误') + '</div>';
+            });
+          }, 380);
+        });
+
+        $('#htSave').addEventListener('click', function () {
+          const name = $('#htName').value.trim();
+          if (!name) { toast('请填写酒店名称'); return; }
+          const addr = $('#htAddr').value.trim();
+          const lat = parseFloat($('#htLat').value);
+          const lng = parseFloat($('#htLng').value);
+          const id = 'ch' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+          STORE.setCustomHotel(id, {
+            name: name, city: addr || name, address: addr,
+            lat: isNaN(lat) ? null : lat, lng: isNaN(lng) ? null : lng,
+            region: day.region,
+          });
+          STORE.setDayMeta(day.id, { hotelId: id });
+          afterHotelChange();
+          toast('已保存住宿「' + name + '」');
+        });
+      }, 'editor');
   }
 
   /* ---- add a day ------------------------------------------------------ */
@@ -4355,7 +4542,7 @@
     const cur = STORE.raw();
     ['places', 'legs', 'legEdits', 'blocks', 'hidden', 'photoSpots', 'hiddenPhotos',
       'order', 'sortMode', 'placeTimes', 'presets', 'budget', 'rates', 'photoVisible',
-      'dayMeta', 'customCities', 'extraDays', 'removedDays'].forEach(function (k) {
+      'dayMeta', 'customCities', 'customHotels', 'extraDays', 'removedDays'].forEach(function (k) {
       if (payload.user[k] !== undefined) cur[k] = payload.user[k];
     });
     // save() → apply() re-attaches extra days and re-registers custom cities
@@ -4711,6 +4898,9 @@
 
       const dayBtn = t.closest('[data-day]');
       if (dayBtn && !t.closest('#dayChips')) { selectDay(Number(dayBtn.dataset.day)); return; }
+
+      const hotelEdit = t.closest('[data-hotel-edit]');
+      if (hotelEdit) { openHotelEditor(hotelEdit.dataset.hotelEdit); return; }
 
       const hotelNav = t.closest('[data-hotel-nav]');
       if (hotelNav) {
