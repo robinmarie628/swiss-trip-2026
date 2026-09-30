@@ -32,7 +32,7 @@
 
   // shown in "更多 · 这个工作台" so you can confirm which build is loaded.
   // Keep in step with VERSION in sw.js.
-  const APP_VERSION = 'v1.7.11';
+  const APP_VERSION = 'v1.7.12';
 
   /* toast --------------------------------------------------------------- */
   let toastTimer = null;
@@ -2142,12 +2142,18 @@
           '<div class="kv"><span class="k">新增交通</span><span class="v">' + stats.legs + ' 段</span></div>' +
           '<div class="kv"><span class="k">新增安排</span><span class="v">' + stats.blocks + ' 条</span></div>' +
           '<div class="kv"><span class="k">隐藏项目</span><span class="v">' + stats.hidden + ' 项</span></div>' +
+          '<div class="kv"><span class="k">新增日期</span><span class="v">' + (stats.extraDays || 0) + ' 天</span></div>' +
+          '<div class="kv"><span class="k">已删除日期</span><span class="v">' + (stats.removedDays || 0) + ' 天</span></div>' +
           '<div class="kv"><span class="k">常用消费</span><span class="v">' +
             (stats.hasCustomPresets ? '已自定义 ' + STORE.presets().length + ' 项' : '默认 ' + STORE.presets().length + ' 项') +
             '</span></div>' +
         '</div>' +
         '<div class="card-bd">' +
           '<div class="btn-row">' +
+            (stats.removedDays
+              ? '<button class="btn sm primary" data-restore-days="1">' +
+                  icon('swap') + '恢复已删除的日期（' + stats.removedDays + '）</button>'
+              : '') +
             '<button class="btn sm ghost" data-backup="1">导出备份</button>' +
             '<button class="btn sm ghost" data-restore="1">导入备份</button>' +
             '<button class="btn sm ghost" data-clear-edits="1">清空我的修改</button>' +
@@ -3693,10 +3699,13 @@
       '<div class="field"><label>概述</label>' +
         '<textarea id="dmSummary" rows="3">' + esc(day.summary || '') + '</textarea></div>' +
       '<button class="btn block primary" id="dmSave">' + icon('check') + '保存文字</button>' +
-      (STORE.isExtraDay(day.id)
-        ? '<button class="btn block ghost dm-del" id="dmDel" style="margin-top:10px">' +
-            icon('trash') + '删除这一天</button>'
-        : ''),
+      '<button class="btn block ghost dm-del" id="dmDel" style="margin-top:10px">' +
+        icon('trash') + (STORE.isExtraDay(day.id) ? '删除这一天' : '从行程中删除这一天') + '</button>' +
+      '<div id="dmDelHint" class="dm-del-hint">' +
+        (STORE.isExtraDay(day.id)
+          ? '这一天是你自己加的，删除后无法恢复。'
+          : '行程原有的日期会被「隐藏」，之后可在「更多 → 我的修改」里恢复。') +
+      '</div>',
       function () {
         const inner = $('.sheet-inner');
         inner.addEventListener('click', function (ev) {
@@ -3746,15 +3755,17 @@
         if (del) del.addEventListener('click', function () {
           if (!delArmed) {
             delArmed = true;
-            del.innerHTML = icon('trash') + '再点一次确认删除';
+            del.innerHTML = icon('trash') + '再点一次确认' +
+              (STORE.isExtraDay(day.id) ? '删除' : '移除');
             return;
           }
+          const wasExtra = STORE.isExtraDay(day.id);
           STORE.removeDay(day.id);
           closeSheet();
           state.sel = clamp(state.sel, 0, DAYS.length - 1);
           state.mapFilter = String(state.sel);
           refreshAfterCityChange();
-          toast('已删除这一天');
+          toast(wasExtra ? '已删除这一天' : '已从行程中移除，可在「更多」里恢复');
         });
       }, 'editor');
   }
@@ -4344,7 +4355,7 @@
     const cur = STORE.raw();
     ['places', 'legs', 'legEdits', 'blocks', 'hidden', 'photoSpots', 'hiddenPhotos',
       'order', 'sortMode', 'placeTimes', 'presets', 'budget', 'rates', 'photoVisible',
-      'dayMeta', 'customCities', 'extraDays'].forEach(function (k) {
+      'dayMeta', 'customCities', 'extraDays', 'removedDays'].forEach(function (k) {
       if (payload.user[k] !== undefined) cur[k] = payload.user[k];
     });
     // save() → apply() re-attaches extra days and re-registers custom cities
@@ -5205,6 +5216,17 @@
       }
 
       /* ---- backup / restore ----------------------------------------- */
+      const rdays = t.closest('[data-restore-days]');
+      if (rdays) {
+        const n = STORE.removedDays().length;
+        STORE.restoreDays();
+        state.sel = clamp(state.sel, 0, DAYS.length - 1);
+        state.mapFilter = String(state.sel);
+        refreshAfterEdit();
+        toast('已恢复 ' + n + ' 天');
+        return;
+      }
+
       const bk = t.closest('[data-backup]');
       if (bk) {
         const blob = new Blob([STORE.exportJson()], { type: 'application/json' });

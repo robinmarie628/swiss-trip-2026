@@ -1849,6 +1849,7 @@ body.linking { cursor: crosshair; }
 .cs-picked .cs-tx b { font-size: 13.5px; font-weight: 800; }
 .cs-picked .cs-tx span { font-size: 11.5px; color: var(--muted); }
 .dm-del { color: var(--red); }
+.dm-del-hint { margin-top: 7px; font-size: 11.5px; line-height: 1.6; color: var(--muted); text-align: center; }
 
 /* ---------- add-a-day chip --------------------------------------------- */
 .dchip-add {

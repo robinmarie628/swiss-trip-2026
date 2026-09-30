@@ -31,6 +31,7 @@
                         //   top of data.js so the weather city + the itinerary
                         //   / map city names can be changed in sync ("换城市")
       extraDays: [],     // user-added days, appended to DAYS and sorted by date
+      removedDays: [],   // ids of itinerary days the traveller removed (restorable)
       customCities: {},  // cityKey -> { label, labelEn, lat, lng, color, soft }
                         //   cities the traveller searched for, registered into
                         //   REGIONS + WEATHER_PLACES on every apply()
@@ -48,6 +49,7 @@
   let data = blank();
   let base = null;                 // pristine snapshot of data.js day content
   let baseIds = [];                // ids of the days that came from data.js
+  let baseDayObj = {};             // id -> the original day object (for restore)
   const subs = [];
 
   /* ---------- stable keys for hiding base items ---------------------- */
@@ -84,7 +86,12 @@
     if (base) return;
     base = {};
     baseIds = [];
-    DAYS.forEach(function (d) { baseFor(d); baseIds.push(d.id); });
+    baseDayObj = {};
+    DAYS.forEach(function (d) {
+      baseFor(d);
+      baseIds.push(d.id);
+      baseDayObj[d.id] = d;          // keep the object so a removed day can return
+    });
   }
 
   /** chronological comparator for days */
@@ -105,18 +112,13 @@
           .forEach(function (k) {
             if (!data[k] || typeof data[k] !== 'object' || Array.isArray(data[k])) data[k] = {};
           });
-        ['photoSpots', 'hiddenPhotos', 'extraDays'].forEach(function (k) {
+        ['photoSpots', 'hiddenPhotos', 'extraDays', 'removedDays'].forEach(function (k) {
           if (!Array.isArray(data[k])) data[k] = [];
         });
       }
     } catch (e) { data = blank(); }
 
-    // re-attach days the traveller added, then keep the whole list in date order
-    data.extraDays.forEach(function (d) {
-      if (!DAYS.some(function (x) { return x.id === d.id; })) DAYS.push(d);
-    });
-    DAYS.sort(byDate);
-
+    // apply() rebuilds the day list (adds extra days, drops removed ones)
     apply();
     return data;
   }
@@ -344,14 +346,19 @@
   function apply() {
     snapshot();
     registerCustomCities();
-    // traveller-added days must always be present, in date order — this keeps
-    // a pulled/synced payload correct without a separate rebuild step. Drop any
-    // extra day a pull removed, then re-attach the current set.
+    // Rebuild the day list: itinerary days (minus the ones the traveller
+    // removed) plus the days they added, kept in date order. Doing it here keeps
+    // a pulled/synced payload correct without a separate rebuild step.
     const extraIds = data.extraDays.map(function (d) { return d.id; });
     for (let i = DAYS.length - 1; i >= 0; i--) {
       const id = DAYS[i].id;
+      if (data.removedDays.indexOf(id) >= 0) { DAYS.splice(i, 1); continue; }
       if (baseIds.indexOf(id) < 0 && extraIds.indexOf(id) < 0) DAYS.splice(i, 1);
     }
+    baseIds.forEach(function (id) {
+      if (data.removedDays.indexOf(id) >= 0) return;
+      if (!DAYS.some(function (x) { return x.id === id; }) && baseDayObj[id]) DAYS.push(baseDayObj[id]);
+    });
     data.extraDays.forEach(function (d) {
       if (!DAYS.some(function (x) { return x.id === d.id; })) DAYS.push(d);
     });
@@ -463,22 +470,52 @@
     return d;
   }
 
-  /** remove a traveller-authored day (base days cannot be removed) */
+  /**
+   * Remove a day from the itinerary.
+   *  - a traveller-added day is deleted for good (with its buckets);
+   *  - an itinerary day is only hidden (added to `removedDays`) so it can be
+   *    restored later — its content in data.js is never touched.
+   */
   function removeDay(dayId) {
-    const i = data.extraDays.map(function (d) { return d.id; }).indexOf(dayId);
-    if (i < 0) return false;
-    data.extraDays.splice(i, 1);
+    if (data.extraDays.some(function (d) { return d.id === dayId; })) {
+      data.extraDays = data.extraDays.filter(function (d) { return d.id !== dayId; });
+      if (base) delete base[dayId];
+      ['places', 'legs', 'blocks', 'hidden', 'legEdits', 'placeTimes',
+        'order', 'sortMode', 'dayMeta'].forEach(function (k) {
+        if (data[k]) delete data[k][dayId];
+      });
+    } else if (baseIds.indexOf(dayId) >= 0) {
+      if (data.removedDays.indexOf(dayId) < 0) data.removedDays.push(dayId);
+    } else {
+      return false;
+    }
     const j = DAYS.map(function (d) { return d.id; }).indexOf(dayId);
     if (j >= 0) DAYS.splice(j, 1);
-    if (base) delete base[dayId];
-    ['places', 'legs', 'blocks', 'hidden', 'legEdits', 'placeTimes',
-      'order', 'sortMode', 'dayMeta'].forEach(function (k) {
-      if (data[k]) delete data[k][dayId];
-    });
     save();
     apply();
     return true;
   }
+
+  /** bring back one day removed with removeDay() */
+  function restoreDay(dayId) {
+    const i = data.removedDays.indexOf(dayId);
+    if (i < 0) return false;
+    data.removedDays.splice(i, 1);
+    save();
+    apply();
+    return true;
+  }
+
+  /** bring back every removed day */
+  function restoreDays() {
+    if (!data.removedDays.length) return false;
+    data.removedDays = [];
+    save();
+    apply();
+    return true;
+  }
+
+  function removedDays() { return data.removedDays.slice(); }
 
   /* ---------- mutations ---------------------------------------------- */
   function bucket(name, dayId) {
@@ -761,6 +798,7 @@
     Object.keys(data.hidden).forEach(function (k) { hidden += data.hidden[k].length; });
     return { places: places, legs: legs, blocks: blocks, hidden: hidden,
       photos: data.photoSpots.length, hiddenPhotos: data.hiddenPhotos.length,
+      extraDays: data.extraDays.length, removedDays: data.removedDays.length,
       hasCustomPresets: Array.isArray(data.presets) };
   }
 
@@ -770,6 +808,7 @@
     getDayMeta: getDayMeta, setDayMeta: setDayMeta,
     customCities: customCities, setCustomCity: setCustomCity,
     addDay: addDay, removeDay: removeDay, isExtraDay: isExtraDay,
+    restoreDay: restoreDay, restoreDays: restoreDays, removedDays: removedDays,
     addPlace: addPlace, addLeg: addLeg, addBlock: addBlock,
     updateLeg: updateLeg,
     placeTime: placeTime, setPlaceTime: setPlaceTime,
