@@ -32,7 +32,7 @@
 
   // shown in "更多 · 这个工作台" so you can confirm which build is loaded.
   // Keep in step with VERSION in sw.js.
-  const APP_VERSION = 'v1.7.14';
+  const APP_VERSION = 'v1.7.15';
 
   /* toast --------------------------------------------------------------- */
   let toastTimer = null;
@@ -3879,13 +3879,39 @@
     if (state.mapReady) renderMapContent();
   }
 
+  /** is a hotel still assigned to any day (optionally ignoring one day)? */
+  function hotelInUse(hotelId, exceptDayId) {
+    if (!hotelId) return false;
+    if (DAYS.some(function (d) { return d.id !== exceptDayId && d.hotelId === hotelId; })) return true;
+    const meta = (typeof STORE.raw === 'function' ? STORE.raw().dayMeta : null) || {};
+    return Object.keys(meta).some(function (k) {
+      return k !== exceptDayId && meta[k] && meta[k].hotelId === hotelId;
+    });
+  }
+
+  /**
+   * Point a day at a hotel ('' clears it). If it replaces a traveller-added hotel
+   * that no other day uses any more, that hotel is forgotten so it does not stay
+   * in the quick list.
+   */
+  function assignHotel(day, hotelId) {
+    const prev = hotelById(day.hotelId);
+    STORE.setDayMeta(day.id, { hotelId: hotelId });
+    if (prev && prev.custom && prev.id !== hotelId && !hotelInUse(prev.id)) {
+      STORE.removeCustomHotel(prev.id);
+    }
+  }
+
   /** set / change / clear the lodging for one day (existing hotel or a new one) */
   function openHotelEditor(dayId) {
     const day = DAYS.filter(function (d) { return d.id === dayId; })[0] || DAYS[state.sel];
     const cur = hotelById(day.hotelId);
-    const existing = HOTELS.concat(Object.keys(STORE.customHotels()).map(function (k) {
-      return STORE.customHotels()[k];
-    }));
+    // quick list = the built-in hotels + only the custom ones still assigned to
+    // some day, so a hotel the traveller cleared does not linger here forever
+    const custom = STORE.customHotels();
+    const existing = HOTELS.concat(Object.keys(custom)
+      .filter(function (k) { return hotelInUse(k); })
+      .map(function (k) { return custom[k]; }));
     let results = [], timer = null, seq = 0;
 
     openSheet('设置住宿', day.dow + ' · ' + day.title,
@@ -3931,7 +3957,7 @@
         const inner = $('.sheet-inner');
         inner.addEventListener('click', function (ev) {
           const use = ev.target.closest('[data-ht-use]');
-          if (use) { STORE.setDayMeta(day.id, { hotelId: use.dataset.htUse }); afterHotelChange(); return; }
+          if (use) { assignHotel(day, use.dataset.htUse); afterHotelChange(); return; }
           const r = ev.target.closest('[data-ht-pick]');
           if (r) {
             const c = results[Number(r.dataset.htPick)];
@@ -3948,7 +3974,9 @@
 
         const clr = $('#htClear');
         if (clr) clr.addEventListener('click', function () {
-          STORE.setDayMeta(day.id, { hotelId: null });
+          // '' means "explicitly no lodging" (a plain null would just revert a
+          // base day to its original hotel instead of clearing it)
+          assignHotel(day, '');
           afterHotelChange();
           toast('已清除住宿');
         });
@@ -3991,7 +4019,7 @@
             lat: isNaN(lat) ? null : lat, lng: isNaN(lng) ? null : lng,
             region: day.region,
           });
-          STORE.setDayMeta(day.id, { hotelId: id });
+          assignHotel(day, id);
           afterHotelChange();
           toast('已保存住宿「' + name + '」');
         });

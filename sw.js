@@ -4,7 +4,7 @@
    Map tiles are cached opportunistically after first view.
    ========================================================================== */
 
-const VERSION = 'v1.7.14';
+const VERSION = 'v1.7.15';
 const SHELL = 'swiss-shell-' + VERSION;
 const TILES = 'swiss-tiles-' + VERSION;
 
