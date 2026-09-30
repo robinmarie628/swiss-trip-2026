@@ -32,7 +32,7 @@
 
   // shown in "更多 · 这个工作台" so you can confirm which build is loaded.
   // Keep in step with VERSION in sw.js.
-  const APP_VERSION = 'v1.7.13';
+  const APP_VERSION = 'v1.7.14';
 
   /* toast --------------------------------------------------------------- */
   let toastTimer = null;
@@ -3192,12 +3192,13 @@
    * by name" path is kept below for adding a known viewpoint.
    */
   function openPhotoAdd() {
-    // when the map is filtered to one day, that day is the one the traveller is
-    // looking at — default the new spot to it so it shows up right away
-    const filtered = state.view === 'map' && /^\d+$/.test(String(state.mapFilter))
-      ? clamp(Number(state.mapFilter), 0, DAYS.length - 1) : null;
-    const st = { lat: null, lng: null, blob: null, url: null,
-      dayIdx: filtered == null ? state.sel : filtered };
+    // Default to the day the map is currently showing (its legend filter) — that
+    // is the day the traveller clicked and is looking at — falling back to the
+    // selected day. This is read regardless of the active view so a photo always
+    // lands on the day on screen instead of needing a manual fix afterwards.
+    const mf = String(state.mapFilter);
+    const defIdx = /^\d+$/.test(mf) ? clamp(Number(mf), 0, DAYS.length - 1) : state.sel;
+    const st = { lat: null, lng: null, blob: null, url: null, dayIdx: defIdx };
     let searchTimer = null, searchSeq = 0;
     phResults = [];
 
@@ -4843,6 +4844,14 @@
       const b = e.target.closest('[data-mfilter]');
       if (!b) return;
       state.mapFilter = b.dataset.mfilter;
+      // keep the app's "current day" in step with the map filter, so anything
+      // added from here (a photo spot, lodging…) defaults to the day you clicked
+      if (/^\d+$/.test(state.mapFilter)) {
+        state.sel = clamp(Number(state.mapFilter), 0, DAYS.length - 1);
+        store.set(K.sel, state.sel);
+        renderChips();
+        renderHero();
+      }
       renderMapLegend();
       renderMapContent();
     });
