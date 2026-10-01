@@ -167,6 +167,17 @@
           <div class="map-overlay top">
             <div class="map-legend" id="mapLegend"></div>
           </div>
+          <div class="map-overlay bottom">
+            <button class="map-locate" id="mapLocate" data-map-action="locate"
+                    aria-label="显示我的位置" title="我的位置">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3.3"/>
+                <path d="M12 1.8v3.4M12 18.8v3.4M1.8 12h3.4M18.8 12h3.4"/>
+                <circle cx="12" cy="12" r="7.6"/>
+              </svg>
+            </button>
+          </div>
           <div id="map"></div>
         </div>
       </div>

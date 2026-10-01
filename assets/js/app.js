@@ -32,7 +32,7 @@
 
   // shown in "更多 · 这个工作台" so you can confirm which build is loaded.
   // Keep in step with VERSION in sw.js.
-  const APP_VERSION = 'v1.7.15';
+  const APP_VERSION = 'v1.7.16';
 
   /* toast --------------------------------------------------------------- */
   let toastTimer = null;
@@ -759,6 +759,15 @@
   // { filter, order: [placeIdx…], km } — cleared when the filter changes.
   let mapSuggest = null;
 
+  // "my location" lives on its own layer group so renderMapContent()'s
+  // overlayGroup.clearLayers() never wipes it, and so the accuracy circle can
+  // sit under the dot without competing with the itinerary pins.
+  let locGroup = null;    // holds locMarker + locCircle
+  let locMarker = null;
+  let locCircle = null;
+  let locWatch = null;    // watchPosition id, so the dot follows the traveller
+  let locOn = false;
+
   const TILE = {
     std: {
       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -863,6 +872,98 @@
       iconAnchor: [14, 34],
       popupAnchor: [0, -34],
     });
+  }
+
+  /* ---- my location: a live blue dot, on its own layer ---------------- */
+
+  /** the blue "you are here" dot — a solid core under a breathing halo */
+  function makeMePin() {
+    return L.divIcon({
+      className: '',
+      html: '<div class="me-dot"><span class="me-halo"></span><span class="me-core"></span></div>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+      popupAnchor: [0, -12],
+    });
+  }
+
+  function mePopup(lat, lng, acc) {
+    return '<b>我的位置</b>' +
+      '<div class="pop-sub">' + lat.toFixed(5) + ', ' + lng.toFixed(5) +
+        (acc ? ' · 精度约 ' + Math.round(acc) + ' 米' : '') + '</div>' +
+      '<div class="pop-acts"><a class="btn sm primary" href="' +
+        navUrl(lat, lng, '我的位置').google +
+        '" target="_blank" rel="noopener">导航到此</a></div>';
+  }
+
+  /** create the dot on first fix, then just move it on every later fix */
+  function drawMe(lat, lng, acc) {
+    if (!map) return null;
+    if (!locGroup) locGroup = L.layerGroup().addTo(map);
+    const radius = Math.max(Number(acc) || 0, 15);
+    if (!locMarker) {
+      locMarker = L.marker([lat, lng], { icon: makeMePin(), zIndexOffset: 1000 })
+        .addTo(locGroup);
+      locCircle = L.circle([lat, lng], {
+        radius: radius, color: '#1a73e8', weight: 1, opacity: .45,
+        fillColor: '#1a73e8', fillOpacity: .12,
+      }).addTo(locGroup);
+    } else {
+      locMarker.setLatLng([lat, lng]);
+      locCircle.setLatLng([lat, lng]).setRadius(radius);
+    }
+    locMarker.bindPopup(mePopup(lat, lng, acc));
+    return locMarker;
+  }
+
+  function stopLocate() {
+    if (locWatch != null && navigator.geolocation.clearWatch) {
+      navigator.geolocation.clearWatch(locWatch);
+    }
+    locWatch = null;
+    if (locGroup) locGroup.clearLayers();
+    locMarker = null;
+    locCircle = null;
+    locOn = false;
+  }
+
+  /** toggle the traveller's own position on the map */
+  function locateMe() {
+    if (!map) return;
+    const btn = $('#mapLocate');
+    if (locOn) {
+      stopLocate();
+      if (btn) { btn.classList.remove('is-on'); btn.setAttribute('aria-label', '显示我的位置'); }
+      toast('已隐藏我的位置');
+      return;
+    }
+    if (!('geolocation' in navigator)) { toast('此设备不支持定位'); return; }
+    if (btn) { btn.classList.add('is-busy'); btn.setAttribute('aria-label', '定位中…'); }
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      const c = pos.coords;
+      const mk = drawMe(c.latitude, c.longitude, c.accuracy);
+      locOn = true;
+      if (btn) {
+        btn.classList.remove('is-busy');
+        btn.classList.add('is-on');
+        btn.setAttribute('aria-label', '隐藏我的位置');
+      }
+      // recentre on the traveller, then open the popup so the dot is obvious
+      map.setView([c.latitude, c.longitude], Math.max(map.getZoom(), 15), { animate: true });
+      if (mk) setTimeout(function () { mk.openPopup(); }, 320);
+      // keep the dot fresh while the map is open
+      if (locWatch == null && navigator.geolocation.watchPosition) {
+        locWatch = navigator.geolocation.watchPosition(function (p) {
+          drawMe(p.coords.latitude, p.coords.longitude, p.coords.accuracy);
+        }, function () {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+      }
+    }, function (err) {
+      if (btn) { btn.classList.remove('is-busy'); btn.setAttribute('aria-label', '显示我的位置'); }
+      const why = err && err.code === 1 ? '定位权限被拒绝'
+        : err && err.code === 3 ? '定位超时'
+        : '无法获取位置';
+      toast(why + '，请检查浏览器的定位权限');
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
   }
 
   function photoPopupHtml(s) {
@@ -5010,6 +5111,7 @@
           toast(state.mapRoute ? '已显示行程路线' : '已隐藏行程路线');
         }
         if (a === 'suggest') toggleSuggest();
+        if (a === 'locate') { locateMe(); return; }
         if (a === 'terrain') {
           state.mapLayer = state.mapLayer === 'std' ? 'terrain' : 'std';
           const cfg = TILE[state.mapLayer];

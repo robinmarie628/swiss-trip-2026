@@ -539,6 +539,43 @@ main {
 }
 .map-overlay > * { pointer-events: auto; }
 .map-overlay.top { top: 12px; right: 58px; }
+/* the locate button sits bottom-left so it never fights the zoom control
+   (top-right), the day legend (top) or the attribution bar (bottom-right) */
+.map-overlay.bottom { bottom: 12px; left: 12px; right: auto; }
+.map-locate {
+  width: 42px; height: 42px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); box-shadow: var(--shadow-md);
+  cursor: pointer;
+  transition: transform .16s var(--ease), background .16s var(--ease), color .16s var(--ease);
+}
+.map-locate svg { width: 21px; height: 21px; }
+.map-locate:active { transform: scale(.94); }
+.map-locate.is-busy { opacity: .55; pointer-events: none; }
+.map-locate.is-on { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+
+/* the "you are here" dot — a blue core in a white ring under a breathing halo.
+   The halo animates its own transform, never the wrapper Leaflet positions. */
+.me-dot { position: relative; width: 22px; height: 22px; }
+.me-dot .me-core {
+  position: absolute; inset: 4px; border-radius: 50%;
+  background: #1a73e8; border: 2.5px solid #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .45);
+}
+.me-dot .me-halo {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: rgba(26, 115, 232, .30);
+  animation: me-breathe 2s ease-out infinite;
+}
+@keyframes me-breathe {
+  0%   { transform: scale(.45); opacity: .9; }
+  70%  { transform: scale(1.55); opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .me-dot .me-halo { animation: none; opacity: .35; }
+}
 
 /* leaflet controls sit above the map overlays */
 .leaflet-top { z-index: 600; }
